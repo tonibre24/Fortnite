@@ -1,0 +1,50 @@
+{
+  "name": "project-riftfront",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Project Riftfront - browser-based multiplayer third-person shooter vertical slice",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=20.11.0"
+  },
+  "packageManager": "pnpm@10.33.0",
+  "scripts": {
+    "dev": "concurrently -n server,client -c magenta,cyan \"pnpm dev:server\" \"pnpm dev:client\"",
+    "dev:server": "pnpm --filter @riftfront/server dev",
+    "dev:client": "pnpm --filter @riftfront/client dev",
+    "build": "pnpm --filter @riftfront/shared build && pnpm --filter @riftfront/server build && pnpm --filter @riftfront/client build",
+    "build:shared": "pnpm --filter @riftfront/shared build",
+    "start": "pnpm --filter @riftfront/server start",
+    "preview": "pnpm --filter @riftfront/client preview",
+    "test": "vitest run --project unit",
+    "test:watch": "vitest --project unit",
+    "test:integration": "pnpm build:shared && pnpm --filter @riftfront/server build && vitest run --project integration",
+    "test:all": "pnpm build:shared && pnpm --filter @riftfront/server build && vitest run",
+    "typecheck": "pnpm build:shared && pnpm --filter @riftfront/shared --filter @riftfront/server --filter @riftfront/client --filter @riftfront/tests exec tsc --noEmit -p tsconfig.json",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write \"**/*.{ts,tsx,js,json,css,html,md,yml,yaml}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,json,css,html,md,yml,yaml}\"",
+    "verify": "pnpm lint && pnpm typecheck && pnpm test:all && pnpm build && pnpm verify:browser",
+    "verify:browser": "node scripts/verify-browser.mjs"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.19.0",
+    "@types/node": "^22.13.1",
+    "concurrently": "^9.1.2",
+    "eslint": "^9.19.0",
+    "eslint-config-prettier": "^10.0.1",
+    "playwright": "^1.62.1",
+    "prettier": "^3.4.2",
+    "typescript": "^5.7.3",
+    "typescript-eslint": "^8.23.0",
+    "vitest": "^3.0.5"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "msgpackr-extract"
+    ]
+  }
+}

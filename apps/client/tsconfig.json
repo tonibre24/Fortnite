@@ -1,0 +1,11 @@
+{
+  "extends": "@riftfront/config/tsconfig.browser.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "types": ["vite/client"],
+    "paths": {
+      "@riftfront/shared": ["../../packages/shared/src/index.ts"]
+    }
+  },
+  "include": ["src/**/*.ts", "vite.config.ts"]
+}
