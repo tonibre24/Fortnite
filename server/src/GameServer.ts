@@ -14,6 +14,7 @@ import {
 } from '@br/shared';
 import { Connection, ConnState } from './Connection.js';
 import { TickLoop } from './TickLoop.js';
+import { World } from './World.js';
 
 export interface GameServerOptions {
   port?: number;
@@ -42,7 +43,7 @@ export class GameServer {
   private readonly connections = new Set<Connection>();
   private readonly byPlayerId = new Map<number, Connection>();
   private readonly freeIds: number[] = [];
-  private currentTick = 0;
+  readonly world: World;
 
   readonly errors: ServerError[] = [];
 
@@ -52,6 +53,7 @@ export class GameServer {
     this.timeScale = options.timeScale ?? 1;
     this.log = options.log ?? ((m) => console.log(m));
 
+    this.world = new World(this.seed);
     for (let id = MAX_PLAYERS; id >= 1; id--) this.freeIds.push(id);
 
     this.loop = new TickLoop(
@@ -63,7 +65,7 @@ export class GameServer {
   }
 
   get tick(): number {
-    return this.currentTick;
+    return this.world.tick;
   }
 
   get playerCount(): number {
@@ -82,6 +84,8 @@ export class GameServer {
   resetStats(): void {
     this.loop.resetStats();
     this.errors.length = 0;
+    this.world.starvationSteps = 0;
+    for (const player of this.world.players.values()) player.droppedCommands = 0;
   }
 
   /** Starts listening. Resolves with the actually bound port (0 => ephemeral). */
@@ -163,12 +167,23 @@ export class GameServer {
         conn.name = msg.name.slice(0, 24) || `player${id}`;
         conn.state = ConnState.Playing;
         this.byPlayerId.set(id, conn);
-        conn.send(encodeWelcome(id, this.seed, this.currentTick, performance.now()));
+        this.world.addPlayer(id, conn.name);
+        conn.send(encodeWelcome(id, this.seed, this.world.mapHash, this.world.tick, performance.now()));
         this.log(`+ ${conn.name} joined as #${id} (${this.byPlayerId.size} online)`);
         break;
       }
       case MsgType.Ping: {
-        conn.send(encodePong(msg.clientTime, performance.now(), this.currentTick));
+        conn.send(encodePong(msg.clientTime, performance.now(), this.world.tick));
+        break;
+      }
+      case MsgType.Input: {
+        if (conn.state !== ConnState.Playing) return;
+        const player = this.world.players.get(conn.playerId);
+        if (player === undefined) return;
+        player.enqueue(msg.commands);
+        // Only ever move the baseline forward; a stale ack would make the
+        // server delta against something the client has already replaced.
+        if (msg.ackTick > player.ackedTick) player.ackedTick = msg.ackTick;
         break;
       }
     }
@@ -183,6 +198,7 @@ export class GameServer {
     if (!this.connections.delete(conn)) return;
     if (conn.playerId !== 0) {
       this.byPlayerId.delete(conn.playerId);
+      this.world.removePlayer(conn.playerId);
       this.freeIds.push(conn.playerId);
       this.log(`- ${conn.name} left (${this.byPlayerId.size} online)`);
     }
@@ -190,14 +206,20 @@ export class GameServer {
   }
 
   private step(): void {
-    this.currentTick += 1;
-
     const now = performance.now();
     const timeout = CONNECTION_TIMEOUT_MS / this.timeScale;
     for (const conn of [...this.connections]) {
       if (now - conn.lastPacketTime > timeout) {
         this.kick(conn, KickReason.Timeout);
       }
+    }
+
+    this.world.step();
+
+    for (const conn of this.byPlayerId.values()) {
+      const player = this.world.players.get(conn.playerId);
+      if (player === undefined) continue;
+      conn.send(this.world.snapshotFor(player));
     }
   }
 }

@@ -32,6 +32,10 @@ export const INTERP_DELAY_MS = 100;
 export const SNAPSHOT_BUFFER_SIZE = 32;
 /** Beyond this the client stops extrapolating remote players and freezes them. */
 export const EXTRAPOLATION_LIMIT_MS = 250;
+/** How fast the interpolation clock drifts toward later-arriving snapshots. */
+export const INTERP_OFFSET_DRIFT = 0.01;
+/** Ticks the client may simulate in one frame after a stall (e.g. a background tab). */
+export const CLIENT_MAX_CATCHUP_TICKS = 5;
 
 /** Ping interval used for round-trip and clock offset estimation. */
 export const PING_INTERVAL_MS = 1000;
@@ -48,10 +52,17 @@ export const CONNECTION_TIMEOUT_MS = 15000;
 
 // ------------------------------------------------------------------ quantization
 
+/** Radians of yaw per pixel of raw mouse movement. */
+export const MOUSE_SENSITIVITY = 0.0022;
+
 export const YAW_BITS = 16;
 export const YAW_STEPS = 1 << YAW_BITS;
-export const PITCH_BITS = 16;
-export const PITCH_STEPS = 1 << PITCH_BITS;
+/**
+ * Pitch is signed so that a quantized zero means "looking level". An unsigned
+ * encoding would make the default-initialised value mean "looking straight
+ * down", which is exactly the kind of trap that only shows up on screen.
+ */
+export const PITCH_SCALE = 32767;
 export const MAX_PITCH = Math.PI / 2 - 0.01;
 
 // ---------------------------------------------------------------------- world
@@ -78,13 +89,17 @@ export const PLAYER_MAX_SHIELD = 100;
 
 export const WALK_SPEED = 5.5;
 export const SPRINT_SPEED = 8.5;
-/** Horizontal acceleration while grounded. */
-export const GROUND_ACCEL = 60;
-/** Horizontal acceleration while airborne. */
-export const AIR_ACCEL = 14;
-/** Velocity decay per second while grounded and not inputting movement. */
+/**
+ * Acceleration scales, in units of target-speeds per second. Friction is
+ * applied every tick even while accelerating, so top speed settles at
+ * `accel * targetSpeed / friction`; keeping accel above friction is what lets a
+ * player actually reach the speed they are aiming for.
+ */
+export const GROUND_ACCEL = 12;
+export const AIR_ACCEL = 1.2;
+/** Fraction of horizontal velocity shed per second while grounded. */
 export const GROUND_FRICTION = 11;
-/** Velocity decay per second while airborne. */
+/** Fraction of horizontal velocity shed per second while airborne. */
 export const AIR_FRICTION = 0.2;
 export const GRAVITY = 24;
 export const JUMP_VELOCITY = 8.4;
@@ -95,6 +110,11 @@ export const STEP_HEIGHT = 0.55;
 export const COLLISION_SKIN = 0.001;
 /** Grace period after leaving a ledge during which jumping still works. */
 export const COYOTE_TIME = 0.1;
+export const COYOTE_TICKS = Math.round(COYOTE_TIME * TICK_RATE);
+/** Penetration resolve iterations per axis. */
+export const MAX_RESOLVE_PASSES = 4;
+/** Saturation value for the "ticks since grounded" counter (fits in a byte). */
+export const SINCE_GROUNDED_MAX = 255;
 
 // ------------------------------------------------------------ map generation
 
@@ -141,7 +161,12 @@ export const SCATTER_POI_CLEARANCE = 6;
 
 // -------------------------------------------------------------------- spawns
 
-export const SPAWN_RING_RADIUS = 200;
+/**
+ * Radius of the ring players start on. Small enough that everyone can see
+ * everyone else immediately, which is what makes movement and interpolation
+ * verifiable by eye. The bus drop replaces this in a later phase.
+ */
+export const SPAWN_RING_RADIUS = 25;
 export const SPAWN_HEIGHT_PROBE = 80;
 
 // -------------------------------------------------------------------- colors

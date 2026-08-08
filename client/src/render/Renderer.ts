@@ -12,6 +12,11 @@ export class Renderer {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 
     this.scene.background = new THREE.Color(COLOR_SKY);
+    // Flat colors still need light to separate faces; one key light plus fill.
+    const sun = new THREE.DirectionalLight(0xffffff, 2.1);
+    sun.position.set(0.45, 1, 0.28);
+    this.scene.add(sun);
+    this.scene.add(new THREE.AmbientLight(0xffffff, 1.3));
 
     this.camera = new THREE.PerspectiveCamera(80, 1, 0.1, 2000);
     this.camera.position.set(0, PLAYER_EYE_HEIGHT, 0);

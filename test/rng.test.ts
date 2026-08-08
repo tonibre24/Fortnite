@@ -67,7 +67,18 @@ describe('angle quantization', () => {
   it('clamps pitch to the legal look range', () => {
     expect(dequantizePitch(quantizePitch(10))).toBeCloseTo(MAX_PITCH, 4);
     expect(dequantizePitch(quantizePitch(-10))).toBeCloseTo(-MAX_PITCH, 4);
-    expect(dequantizePitch(quantizePitch(0))).toBeCloseTo(0, 4);
+  });
+
+  it('encodes level pitch as zero so a default-initialised state looks level', () => {
+    expect(quantizePitch(0)).toBe(0);
+    expect(dequantizePitch(0)).toBe(0);
+  });
+
+  it('round-trips pitch symmetrically', () => {
+    for (let i = -20; i <= 20; i++) {
+      const pitch = (i / 20) * MAX_PITCH;
+      expect(dequantizePitch(quantizePitch(pitch))).toBeCloseTo(pitch, 4);
+    }
   });
 
   it('is idempotent - quantizing an already-quantized angle changes nothing', () => {

@@ -1,8 +1,4 @@
-import {
-  MAX_PITCH,
-  PITCH_STEPS,
-  YAW_STEPS,
-} from './constants.js';
+import { MAX_PITCH, PITCH_SCALE, YAW_STEPS } from './constants.js';
 
 /**
  * Rounds a double to the nearest float32. Simulation state is kept float32-exact
@@ -76,10 +72,9 @@ export function dequantizeYaw(q: number): number {
 
 export function quantizePitch(pitch: number): number {
   const c = clamp(pitch, -MAX_PITCH, MAX_PITCH);
-  const t = (c + MAX_PITCH) / (MAX_PITCH * 2);
-  return clamp(Math.round(t * (PITCH_STEPS - 1)), 0, PITCH_STEPS - 1);
+  return Math.round((c / MAX_PITCH) * PITCH_SCALE);
 }
 
 export function dequantizePitch(q: number): number {
-  return (q / (PITCH_STEPS - 1)) * (MAX_PITCH * 2) - MAX_PITCH;
+  return (q / PITCH_SCALE) * MAX_PITCH;
 }

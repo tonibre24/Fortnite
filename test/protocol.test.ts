@@ -37,12 +37,13 @@ describe('protocol', () => {
   });
 
   it('round-trips welcome', () => {
-    const msg = decodeServerMessage(encodeWelcome(7, 0xdeadbeef, 99, 1000));
+    const msg = decodeServerMessage(encodeWelcome(7, 0xdeadbeef, 0x1234abcd, 99, 1000));
     expect(msg).toEqual({
       type: MsgType.Welcome,
       protocolVersion: PROTOCOL_VERSION,
       playerId: 7,
       mapSeed: 0xdeadbeef,
+      mapHash: 0x1234abcd,
       tickRate: TICK_RATE,
       tick: 99,
       serverTime: 1000,

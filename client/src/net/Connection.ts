@@ -3,8 +3,10 @@ import {
   MsgType,
   PING_INTERVAL_MS,
   decodeServerMessage,
+  encodeInput,
   encodeJoin,
   encodePing,
+  type InputCommand,
   type WelcomeMsg,
 } from '@br/shared';
 
@@ -28,6 +30,11 @@ export interface SocketLike {
 export interface ConnectionHandlers {
   onStatus?: (status: ConnectionStatus, detail: string) => void;
   onWelcome?: (msg: WelcomeMsg) => void;
+  /**
+   * Snapshots are handed over raw because decoding them needs the caller's
+   * stored baselines, which live in the game layer rather than the transport.
+   */
+  onSnapshot?: (data: ArrayBuffer) => void;
 }
 
 export interface ConnectionOptions {
@@ -54,6 +61,9 @@ export class Connection {
   rttMs = 0;
   /** localTime + serverTimeOffset ~= server clock. Taken from the best RTT sample. */
   serverTimeOffset = 0;
+  mapHash = 0;
+  bytesIn = 0;
+  packetsIn = 0;
 
   private socket: SocketLike | null = null;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
@@ -101,7 +111,21 @@ export class Connection {
     this.socket.send(data);
   }
 
+  sendInput(commands: readonly InputCommand[], ackTick: number): void {
+    if (commands.length === 0) return;
+    this.send(encodeInput(commands, ackTick));
+  }
+
   private onMessage(data: ArrayBuffer): void {
+    this.packetsIn += 1;
+    this.bytesIn += data.byteLength;
+
+    // Snapshots dominate the traffic and are decoded by the game layer.
+    if (data.byteLength > 0 && new Uint8Array(data)[0] === MsgType.Snapshot) {
+      this.handlers.onSnapshot?.(data);
+      return;
+    }
+
     const msg = decodeServerMessage(data);
     if (msg === null) return;
 
@@ -109,6 +133,7 @@ export class Connection {
       case MsgType.Welcome: {
         this.playerId = msg.playerId;
         this.mapSeed = msg.mapSeed;
+        this.mapHash = msg.mapHash;
         this.serverTick = msg.tick;
         this.setStatus('connected', `#${msg.playerId}`);
         this.handlers.onWelcome?.(msg);

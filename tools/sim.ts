@@ -5,7 +5,7 @@
  * client netcode with randomized input, runs an accelerated round, then prints
  * a report. Exits non-zero when anything looks wrong, so it doubles as CI.
  */
-import { TICK_MS } from '@br/shared';
+import { RECONCILE_EPSILON, TICK_MS } from '@br/shared';
 import { GameServer } from '../server/src/GameServer.js';
 import { SimClient } from './SimClient.js';
 
@@ -81,44 +81,98 @@ async function main(): Promise<void> {
 
   for (const client of clients) client.start();
 
-  // Give every client a chance to complete the handshake before timing starts.
+  // Let every client finish the handshake and receive a first snapshot before
+  // the measurement window opens.
   const handshakeDeadline = Date.now() + 5000;
-  while (Date.now() < handshakeDeadline && clients.some((c) => c.playerId === 0)) {
+  while (Date.now() < handshakeDeadline && clients.some((c) => !c.client.ready)) {
     await sleep(20);
   }
 
-  // Everything measured from here on is the round proper, not process warm-up.
   server.resetStats();
-  const wallClockMs = (opts.seconds * 1000) / opts.timeScale;
-  await sleep(wallClockMs);
+  for (const client of clients) client.resetStats();
+  await sleep((opts.seconds * 1000) / opts.timeScale);
+
+  const liveError = measureLiveError(server, clients);
 
   for (const client of clients) client.stop();
   await sleep(50);
   await server.stop();
 
-  printReport(server, clients, opts);
+  printReport(server, clients, opts, liveError);
 }
 
-function printReport(server: GameServer, clients: SimClient[], opts: SimOptions): void {
+/**
+ * Distance between each client's predicted position and the server's
+ * authoritative one, sampled while both are still running. Prediction runs
+ * ahead of authority by roughly the latency, so a moving player is expected to
+ * show a nonzero lead here; the number that must stay at zero is the
+ * reconciliation error, which is what the client actually has to correct away.
+ */
+function measureLiveError(server: GameServer, clients: SimClient[]): number[] {
+  const errors: number[] = [];
+  for (const client of clients) {
+    const player = server.world.players.get(client.playerId);
+    if (player === undefined) continue;
+    errors.push(client.positionErrorVersus(player.state.pos));
+  }
+  return errors;
+}
+
+function printReport(
+  server: GameServer,
+  clients: SimClient[],
+  opts: SimOptions,
+  liveError: number[],
+): void {
   const stats = server.tickStats;
   const connected = clients.filter((c) => c.playerId !== 0);
   const clientErrors = clients.flatMap((c) => c.errors);
-
   const expectedTicks = opts.seconds * (1000 / TICK_MS);
+
+  const maxReconcileError = Math.max(0, ...connected.map((c) => c.maxPredictionError));
+  const avgReconcileError = average(connected.map((c) => c.averagePredictionError));
+  const reconciles = sum(connected.map((c) => c.reconciles));
+  const corrections = sum(connected.map((c) => c.corrections));
+  const snapshots = sum(connected.map((c) => c.snapshotsReceived));
+  const undecodable = sum(connected.map((c) => c.snapshotsDropped));
+  const bytes = sum(connected.map((c) => c.bytesIn));
+  const mapMismatches = connected.filter((c) => !c.mapHashMatches).length;
+  const droppedCommands = sum(
+    [...server.world.players.values()].map((p) => p.droppedCommands),
+  );
 
   console.log('server');
   console.log(`  ticks            ${stats.ticks} (expected ~${Math.round(expectedTicks)})`);
   console.log(`  avg tick         ${server.averageTickMs.toFixed(3)} ms`);
   console.log(`  max tick         ${stats.maxDurationMs.toFixed(3)} ms`);
   console.log(`  dropped ticks    ${stats.droppedTicks}`);
+  console.log(`  input starvation ${server.world.starvationSteps} idle steps`);
   console.log(`  exceptions       ${server.errors.length}`);
   console.log('');
 
   console.log('clients');
   console.log(`  connected        ${connected.length}/${clients.length}`);
-  const simRtt = average(connected.map((c) => c.rttMs)) * opts.timeScale;
-  console.log(`  avg rtt          ${simRtt.toFixed(1)} ms (simulated)`);
+  console.log(
+    `  avg rtt          ${(average(connected.map((c) => c.rttMs)) * opts.timeScale).toFixed(1)} ms`,
+  );
+  console.log(`  snapshots        ${snapshots} (${undecodable} undecodable)`);
+  console.log(
+    `  downstream       ${(bytes / opts.seconds / Math.max(1, connected.length) / 1024).toFixed(2)} KiB/s per client`,
+  );
+  console.log(`  visible peers    ${average(connected.map((c) => c.remoteCount)).toFixed(1)} avg`);
+  console.log(`  map hash         ${mapMismatches === 0 ? 'all agree' : `${mapMismatches} MISMATCH`}`);
   console.log(`  exceptions       ${clientErrors.length}`);
+  console.log('');
+
+  console.log('desync (client prediction vs server authority)');
+  console.log(`  reconciliations  ${reconciles}`);
+  console.log(`  corrections      ${corrections} (${percent(corrections, reconciles)})`);
+  console.log(`  avg correction   ${avgReconcileError.toExponential(2)} units`);
+  console.log(`  max correction   ${maxReconcileError.toExponential(2)} units`);
+  console.log(`  flooded input    ${droppedCommands} commands dropped`);
+  console.log(
+    `  live lead        ${average(liveError).toFixed(3)} avg, ${Math.max(0, ...liveError).toFixed(3)} max units`,
+  );
   console.log('');
 
   for (const err of server.errors.slice(0, 5)) {
@@ -138,6 +192,15 @@ function printReport(server: GameServer, clients: SimClient[], opts: SimOptions)
   if (stats.ticks < expectedTicks * 0.9) {
     problems.push(`only ${stats.ticks} of ~${Math.round(expectedTicks)} ticks ran`);
   }
+  if (mapMismatches > 0) problems.push(`${mapMismatches} clients generated a different map`);
+  if (undecodable > 0) problems.push(`${undecodable} snapshots could not be decoded`);
+  if (reconciles === 0) problems.push('no reconciliations happened — clients never received state');
+  // With no packet loss the prediction must reproduce the server exactly, so
+  // any correction at all means the two simulations diverged.
+  if (droppedCommands > 0) problems.push(`${droppedCommands} input commands dropped by the server`);
+  if (opts.lossPercent === 0 && server.world.starvationSteps === 0 && maxReconcileError > RECONCILE_EPSILON) {
+    problems.push(`prediction diverged by ${maxReconcileError.toExponential(2)} units with no packet loss`);
+  }
 
   if (problems.length === 0) {
     console.log('PASS — no problems detected');
@@ -151,6 +214,15 @@ function printReport(server: GameServer, clients: SimClient[], opts: SimOptions)
 function average(values: number[]): number {
   if (values.length === 0) return 0;
   return values.reduce((a, b) => a + b, 0) / values.length;
+}
+
+function sum(values: number[]): number {
+  return values.reduce((a, b) => a + b, 0);
+}
+
+function percent(part: number, whole: number): string {
+  if (whole === 0) return '0%';
+  return `${((part / whole) * 100).toFixed(1)}%`;
 }
 
 await main();

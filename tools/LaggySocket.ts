@@ -1,5 +1,5 @@
 import type { SocketLike } from '../client/src/net/Connection.js';
-import { Rng } from '@br/shared';
+import { MsgType, Rng } from '@br/shared';
 
 export interface LaggyOptions {
   /** One-way delay is half of this. Already scaled to wall-clock by the caller. */
@@ -44,7 +44,7 @@ export class LaggySocket implements SocketLike {
     this.inner.onerror = () => this.onerror?.();
     this.inner.onmessage = (event: MessageEvent) => {
       const data = event.data as ArrayBuffer;
-      this.deliverLater('in', () => this.onmessage?.({ data }));
+      this.deliverLater('in', () => this.onmessage?.({ data }), data);
     };
   }
 
@@ -53,9 +53,13 @@ export class LaggySocket implements SocketLike {
   }
 
   send(data: ArrayBuffer): void {
-    this.deliverLater('out', () => {
-      if (this.inner.readyState === WebSocket.OPEN) this.inner.send(data);
-    });
+    this.deliverLater(
+      'out',
+      () => {
+        if (this.inner.readyState === WebSocket.OPEN) this.inner.send(data);
+      },
+      data,
+    );
   }
 
   close(): void {
@@ -64,9 +68,11 @@ export class LaggySocket implements SocketLike {
     this.inner.close();
   }
 
-  private deliverLater(direction: 'in' | 'out', action: () => void): void {
+  private deliverLater(direction: 'in' | 'out', action: () => void, data: ArrayBuffer): void {
     if (this.closed) return;
-    if (this.opts.lossPercent > 0 && this.rng.next() * 100 < this.opts.lossPercent) return;
+    if (this.opts.lossPercent > 0 && isDroppable(data) && this.rng.next() * 100 < this.opts.lossPercent) {
+      return;
+    }
 
     const oneWay = this.opts.latencyMs / 2;
     const jitter = this.rng.next() * this.opts.jitterMs;
@@ -88,4 +94,17 @@ export class LaggySocket implements SocketLike {
     for (const timer of this.timers) clearTimeout(timer);
     this.timers.clear();
   }
+}
+
+/**
+ * The real transport is WebSocket over TCP and cannot lose anything. The loss
+ * knob is fault injection aimed at the per-tick flow, where recovery is the
+ * client's job: input redundancy repairs a lost command, and a stale delta
+ * baseline forces a full resend. Dropping the handshake instead would only test
+ * whether a client that never sent a join can play, so it is left alone.
+ */
+function isDroppable(data: ArrayBuffer): boolean {
+  if (data.byteLength === 0) return false;
+  const type = new Uint8Array(data)[0];
+  return type === MsgType.Input || type === MsgType.Snapshot;
 }

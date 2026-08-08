@@ -1,5 +1,15 @@
-import { Rng } from '@br/shared';
-import { Connection } from '../client/src/net/Connection.js';
+import {
+  Button,
+  MAX_PITCH,
+  Rng,
+  TICK_MS,
+  clamp,
+  dequantizeYaw,
+  distance,
+  quantizePitch,
+  quantizeYaw,
+} from '@br/shared';
+import { GameClient, type InputSample, type InputSource } from '../client/src/game/GameClient.js';
 import { LaggySocket } from './LaggySocket.js';
 
 export interface SimClientOptions {
@@ -12,24 +22,82 @@ export interface SimClientOptions {
   lossPercent: number;
 }
 
+/** Ticks a bot holds a movement decision before rerolling it. */
+const DECISION_MIN_TICKS = 6;
+const DECISION_MAX_TICKS = 30;
+const JUMP_CHANCE = 0.08;
+const SPRINT_CHANCE = 0.45;
+const TURN_RATE = 2.5;
+
 /**
- * A fake player. It drives the real client Connection over a laggy transport,
- * so whatever the sim exercises is exactly the code the browser runs.
+ * Randomized input that looks enough like a player to exercise every code path:
+ * strafing, sprinting, jumping, turning, and standing still.
+ */
+class BotInput implements InputSource {
+  private buttons = 0;
+  private yaw = 0;
+  private pitch = 0;
+  private turn = 0;
+  private ticksLeft = 0;
+
+  constructor(private readonly rng: Rng) {
+    this.yaw = rng.range(-Math.PI, Math.PI);
+  }
+
+  adoptLook(yawQ: number): void {
+    this.yaw = dequantizeYaw(yawQ);
+  }
+
+  sample(): InputSample {
+    if (this.ticksLeft <= 0) this.reroll();
+    this.ticksLeft -= 1;
+
+    this.yaw += this.turn * (TICK_MS / 1000);
+    this.pitch = clamp(this.pitch, -MAX_PITCH, MAX_PITCH);
+
+    return {
+      buttons: this.buttons,
+      yawQ: quantizeYaw(this.yaw),
+      pitchQ: quantizePitch(this.pitch),
+    };
+  }
+
+  private reroll(): void {
+    const rng = this.rng;
+    this.ticksLeft = rng.int(DECISION_MIN_TICKS, DECISION_MAX_TICKS);
+    this.turn = rng.range(-TURN_RATE, TURN_RATE);
+    this.pitch = rng.range(-MAX_PITCH * 0.6, MAX_PITCH * 0.6);
+
+    let buttons = 0;
+    if (rng.bool(0.75)) buttons |= rng.bool(0.8) ? Button.Forward : Button.Back;
+    if (rng.bool(0.4)) buttons |= rng.bool() ? Button.Left : Button.Right;
+    if (rng.bool(SPRINT_CHANCE)) buttons |= Button.Sprint;
+    if (rng.bool(JUMP_CHANCE)) buttons |= Button.Jump;
+    this.buttons = buttons;
+  }
+}
+
+/**
+ * A fake player. It drives the real GameClient - the same prediction,
+ * reconciliation and interpolation the browser runs - over a transport with
+ * artificial latency, jitter and loss.
  */
 export class SimClient {
   readonly errors: string[] = [];
-  protected readonly rng: Rng;
-  protected readonly connection: Connection;
+  readonly client: GameClient;
 
-  constructor(protected readonly options: SimClientOptions) {
-    this.rng = new Rng(options.seed);
-    // Latency is expressed in simulated time; compress it like everything else.
+  private timer: ReturnType<typeof setInterval> | null = null;
+
+  constructor(private readonly options: SimClientOptions) {
+    const rng = new Rng(options.seed);
+    // Latency is quoted in simulated time, so compress it like everything else.
     const wallLatency = options.latencyMs / options.timeScale;
     const wallJitter = options.jitterMs / options.timeScale;
 
-    this.connection = new Connection({
+    this.client = new GameClient({
       url: options.url,
       name: options.name,
+      input: new BotInput(rng),
       timeScale: options.timeScale,
       createSocket: (url) =>
         new LaggySocket(url, {
@@ -38,29 +106,97 @@ export class SimClient {
           lossPercent: options.lossPercent,
           seed: options.seed ^ 0x9e3779b9,
         }),
-      handlers: {
-        onStatus: (status, detail) => {
-          if (status === 'disconnected' && detail !== 'closed') {
-            this.errors.push(`${options.name}: ${detail}`);
-          }
-        },
+      onStatus: (status, detail) => {
+        if (status === 'disconnected' && detail !== 'closed') {
+          this.errors.push(`${options.name}: ${detail}`);
+        }
       },
     });
   }
 
   get playerId(): number {
-    return this.connection.playerId;
+    return this.client.playerId;
   }
 
   get rttMs(): number {
-    return this.connection.rttMs;
+    return this.client.connection.rttMs;
+  }
+
+  get maxPredictionError(): number {
+    return this.client.predictor.maxError;
+  }
+
+  get averagePredictionError(): number {
+    return this.client.predictor.averageError;
+  }
+
+  get corrections(): number {
+    return this.client.predictor.correctionCount;
+  }
+
+  get reconciles(): number {
+    return this.client.predictor.reconcileCount;
+  }
+
+  get snapshotsReceived(): number {
+    return this.client.snapshotsReceived;
+  }
+
+  get snapshotsDropped(): number {
+    return this.client.snapshotsDropped;
+  }
+
+  get mapHashMatches(): boolean {
+    return this.client.mapHashMatches;
+  }
+
+  get bytesIn(): number {
+    return this.client.connection.bytesIn;
+  }
+
+  /** Clears counters so the report covers the measured round, not the warm-up. */
+  resetStats(): void {
+    const p = this.client.predictor;
+    p.lastError = 0;
+    p.maxError = 0;
+    p.totalError = 0;
+    p.reconcileCount = 0;
+    p.correctionCount = 0;
+    this.client.snapshotsReceived = 0;
+    this.client.snapshotsDropped = 0;
+    this.client.connection.bytesIn = 0;
+    this.client.connection.packetsIn = 0;
+    this.errors.length = 0;
+  }
+
+  get remoteCount(): number {
+    return this.client.remotes.size;
+  }
+
+  /** Distance between our predicted position and the server's latest word on it. */
+  positionErrorVersus(serverPos: { x: number; y: number; z: number }): number {
+    return distance(this.client.predictor.state.pos, serverPos);
   }
 
   start(): void {
-    this.connection.connect();
+    this.client.connect();
+    // Browsers drive this from requestAnimationFrame at display rate; a timer
+    // faster than the tick rate reproduces that here.
+    const frameMs = TICK_MS / this.options.timeScale / 3;
+    this.timer = setInterval(() => {
+      try {
+        this.client.update(performance.now());
+      } catch (err) {
+        this.errors.push(`${this.options.name}: ${err instanceof Error ? err.stack : String(err)}`);
+      }
+    }, frameMs);
   }
 
   stop(): void {
-    this.connection.close();
+    if (this.timer !== null) {
+      clearInterval(this.timer);
+      this.timer = null;
+    }
+    this.client.disconnect();
   }
 }
