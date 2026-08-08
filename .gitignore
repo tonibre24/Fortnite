@@ -1,13 +1,7 @@
 node_modules/
 dist/
-build/
 coverage/
 *.tsbuildinfo
-.env
-.env.local
-.DS_Store
-*.log
-npm-debug.log*
-pnpm-debug.log*
 .vite/
-.eslintcache
+*.log
+.DS_Store

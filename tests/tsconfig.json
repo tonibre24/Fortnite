@@ -1,8 +1,0 @@
-{
-  "extends": "@riftfront/config/tsconfig.node.json",
-  "compilerOptions": {
-    "noEmit": true,
-    "types": ["node", "vitest/globals"]
-  },
-  "include": ["**/*.ts"]
-}
