@@ -8,6 +8,7 @@ import {
   decodeSnapshot,
   generateMap,
   hashMap,
+  peekSnapshotTick,
   type GameMap,
   type InputCommand,
   type PlayerState,
@@ -59,6 +60,8 @@ export class GameClient {
   alpha = 0;
   snapshotsReceived = 0;
   snapshotsDropped = 0;
+  /** Packets discarded for being older than one already applied. */
+  snapshotsStale = 0;
 
   private readonly interpolator: RemoteInterpolator;
   private readonly input: InputSource;
@@ -70,6 +73,7 @@ export class GameClient {
   private hasLastUpdate = false;
   private seq = 0;
   private ackTick = 0;
+  private lastAppliedTick = 0;
 
   constructor(options: GameClientOptions) {
     this.input = options.input;
@@ -122,7 +126,18 @@ export class GameClient {
     const map = this.map;
     if (map === null) return;
 
-    const decoded = decodeSnapshot(data, (tick) => this.snapshots.get(tick) ?? null);
+    // Never apply a snapshot older than one already applied. The server's
+    // acknowledged input sequence only ever moves forward, so accepting a stale
+    // packet would rewind it, drop a command out of the replay queue, and leave
+    // prediction permanently a tick adrift.
+    const tick = peekSnapshotTick(data);
+    if (tick === null) return;
+    if (tick <= this.lastAppliedTick) {
+      this.snapshotsStale += 1;
+      return;
+    }
+
+    const decoded = decodeSnapshot(data, (t) => this.snapshots.get(t) ?? null);
     if (decoded === null) {
       // The baseline aged out of our buffer. Keep acknowledging the last tick we
       // do have; the server will re-send a full snapshot against it or from
@@ -132,6 +147,7 @@ export class GameClient {
     }
 
     this.snapshotsReceived += 1;
+    this.lastAppliedTick = decoded.tick;
     this.snapshots.set(decoded.tick, decoded.players);
     this.trimSnapshots(decoded.tick);
     this.ackTick = decoded.tick;

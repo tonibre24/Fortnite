@@ -135,6 +135,7 @@ function printReport(
   const corrections = sum(connected.map((c) => c.corrections));
   const snapshots = sum(connected.map((c) => c.snapshotsReceived));
   const undecodable = sum(connected.map((c) => c.snapshotsDropped));
+  const stale = sum(connected.map((c) => c.client.snapshotsStale));
   const bytes = sum(connected.map((c) => c.bytesIn));
   const mapMismatches = connected.filter((c) => !c.mapHashMatches).length;
   const droppedCommands = sum(
@@ -155,7 +156,7 @@ function printReport(
   console.log(
     `  avg rtt          ${(average(connected.map((c) => c.rttMs)) * opts.timeScale).toFixed(1)} ms`,
   );
-  console.log(`  snapshots        ${snapshots} (${undecodable} undecodable)`);
+  console.log(`  snapshots        ${snapshots} (${undecodable} undecodable, ${stale} stale)`);
   console.log(
     `  downstream       ${(bytes / opts.seconds / Math.max(1, connected.length) / 1024).toFixed(2)} KiB/s per client`,
   );
@@ -174,6 +175,10 @@ function printReport(
     `  live lead        ${average(liveError).toFixed(3)} avg, ${Math.max(0, ...liveError).toFixed(3)} max units`,
   );
   console.log('');
+
+  for (const c of connected.map((c) => c.worstCorrection).filter((c) => c !== null).slice(0, 3)) {
+    console.log(`  worst: ${c}`);
+  }
 
   for (const err of server.errors.slice(0, 5)) {
     console.log(`server exception: ${err.message}\n${err.stack}`);

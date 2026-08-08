@@ -1,6 +1,13 @@
 import type { SocketLike } from '../client/src/net/Connection.js';
 import { MsgType, Rng } from '@br/shared';
 
+type Direction = 'in' | 'out';
+
+interface Delivery {
+  at: number;
+  action: () => void;
+}
+
 export interface LaggyOptions {
   /** One-way delay is half of this. Already scaled to wall-clock by the caller. */
   latencyMs: number;
@@ -24,9 +31,11 @@ export class LaggySocket implements SocketLike {
   private readonly inner: WebSocket;
   private readonly rng: Rng;
   private readonly opts: LaggyOptions;
-  private nextInboundAt = 0;
-  private nextOutboundAt = 0;
-  private timers = new Set<ReturnType<typeof setTimeout>>();
+  private readonly queues: Record<Direction, Delivery[]> = { in: [], out: [] };
+  private readonly timers: Record<Direction, ReturnType<typeof setTimeout> | null> = {
+    in: null,
+    out: null,
+  };
   private closed = false;
 
   constructor(url: string, opts: LaggyOptions) {
@@ -68,7 +77,7 @@ export class LaggySocket implements SocketLike {
     this.inner.close();
   }
 
-  private deliverLater(direction: 'in' | 'out', action: () => void, data: ArrayBuffer): void {
+  private deliverLater(direction: Direction, action: () => void, data: ArrayBuffer): void {
     if (this.closed) return;
     if (this.opts.lossPercent > 0 && isDroppable(data) && this.rng.next() * 100 < this.opts.lossPercent) {
       return;
@@ -76,23 +85,40 @@ export class LaggySocket implements SocketLike {
 
     const oneWay = this.opts.latencyMs / 2;
     const jitter = this.rng.next() * this.opts.jitterMs;
-    const now = performance.now();
-    const earliest = now + oneWay + jitter;
-    const queue = direction === 'in' ? this.nextInboundAt : this.nextOutboundAt;
-    const at = Math.max(earliest, queue);
-    if (direction === 'in') this.nextInboundAt = at;
-    else this.nextOutboundAt = at;
+    const queue = this.queues[direction];
+    const last = queue[queue.length - 1];
+    // Never schedule ahead of something already queued: a stream transport
+    // cannot reorder, and one setTimeout per message would, because timer
+    // delays are truncated to whole milliseconds.
+    const at = Math.max(performance.now() + oneWay + jitter, last?.at ?? 0);
+    queue.push({ at, action });
+    if (queue.length === 1) this.schedule(direction);
+  }
 
-    const timer = setTimeout(() => {
-      this.timers.delete(timer);
-      if (!this.closed) action();
-    }, Math.max(0, at - now));
-    this.timers.add(timer);
+  /** One timer per direction, draining the queue strictly in order. */
+  private schedule(direction: Direction): void {
+    const queue = this.queues[direction];
+    const head = queue[0];
+    if (head === undefined || this.closed) return;
+    this.timers[direction] = setTimeout(
+      () => {
+        this.timers[direction] = null;
+        if (this.closed) return;
+        const now = performance.now();
+        while (queue.length > 0 && queue[0]!.at <= now) queue.shift()!.action();
+        this.schedule(direction);
+      },
+      Math.max(0, head.at - performance.now()),
+    );
   }
 
   private clearTimers(): void {
-    for (const timer of this.timers) clearTimeout(timer);
-    this.timers.clear();
+    for (const direction of ['in', 'out'] as const) {
+      const timer = this.timers[direction];
+      if (timer !== null) clearTimeout(timer);
+      this.timers[direction] = null;
+      this.queues[direction].length = 0;
+    }
   }
 }
 

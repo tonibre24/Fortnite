@@ -82,6 +82,14 @@ class BotInput implements InputSource {
  * reconciliation and interpolation the browser runs - over a transport with
  * artificial latency, jitter and loss.
  */
+function fmt(s: { pos: { x: number; y: number; z: number }; vel: { x: number; y: number; z: number }; flags: number; sinceGrounded: number }): string {
+  return (
+    `pos(${s.pos.x.toFixed(5)},${s.pos.y.toFixed(5)},${s.pos.z.toFixed(5)}) ` +
+    `vel(${s.vel.x.toFixed(5)},${s.vel.y.toFixed(5)},${s.vel.z.toFixed(5)}) ` +
+    `flags=${s.flags} since=${s.sinceGrounded}`
+  );
+}
+
 export class SimClient {
   readonly errors: string[] = [];
   readonly client: GameClient;
@@ -112,7 +120,23 @@ export class SimClient {
         }
       },
     });
+
+    this.client.predictor.onCorrection = (before, after, seq, pending) => {
+      const d = distance(before.pos, after.pos);
+      if (d <= this.worstDistance) return;
+      this.worstDistance = d;
+      const p = this.client.predictor.pending;
+      const range = p.length === 0 ? 'none' : `${p[0]!.seq}..${p[p.length - 1]!.seq}`;
+      this.worstCorrection =
+        `${options.name} moved ${d.toFixed(4)} lastProcessed=${seq} replayed=${range} (${pending})\n` +
+        `      predicted ${fmt(before)}\n` +
+        `      authority ${fmt(after)}`;
+    };
   }
+
+  /** Details of the largest correction seen, for the report. */
+  worstCorrection: string | null = null;
+  private worstDistance = 0;
 
   get playerId(): number {
     return this.client.playerId;
@@ -162,8 +186,11 @@ export class SimClient {
     p.totalError = 0;
     p.reconcileCount = 0;
     p.correctionCount = 0;
+    this.worstCorrection = null;
+    this.worstDistance = 0;
     this.client.snapshotsReceived = 0;
     this.client.snapshotsDropped = 0;
+    this.client.snapshotsStale = 0;
     this.client.connection.bytesIn = 0;
     this.client.connection.packetsIn = 0;
     this.errors.length = 0;

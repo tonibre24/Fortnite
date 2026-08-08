@@ -22,6 +22,23 @@ npm run check    # tsc --noEmit + vitest
 
 See [CLAUDE.md](CLAUDE.md) for the working agreements.
 
+## What works today
+
+- Server-authoritative 20 Hz simulation; clients send input only.
+- Client-side prediction with server reconciliation. With no packet loss the
+  prediction reproduces the server's state exactly and the correction measures
+  zero — `npm run sim` reports it.
+- Remote players interpolated 100 ms in the past off a drift-corrected
+  snapshot clock.
+- Binary delta snapshots: unchanged players are omitted, unchanged fields cost
+  nothing, and velocity only goes to its owner. ~2.8 KiB/s per client at 8
+  players, ~6.2 at 20.
+- Seeded 500x500 map generated identically on both sides and checked with a
+  hash at join: 8 towns of enterable buildings with stairwells and roofs,
+  terraced hills, trees and rocks.
+- First-person movement: WASD, mouse look under pointer lock, sprint, jump,
+  AABB collision with wall sliding and automatic step-up.
+
 ## Sim harness knobs
 
 `npm run sim` is configured with environment variables:

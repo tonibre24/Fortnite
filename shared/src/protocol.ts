@@ -284,6 +284,20 @@ function diffMask(next: PlayerState, prev: PlayerState, isSelf: boolean): number
 }
 
 /**
+ * The tick a snapshot packet is for, without decoding the rest of it. Lets a
+ * client drop a stale packet before doing any work on it.
+ */
+export function peekSnapshotTick(buffer: ArrayBuffer | Uint8Array): number | null {
+  try {
+    const r = new BinaryReader(buffer);
+    if (r.u8() !== MsgType.Snapshot) return null;
+    return r.u32();
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Rebuilds a full player map from a snapshot packet. `lookupBaseline` returns
  * the client's stored state for a given tick; returning null (the client no
  * longer has that baseline) makes this return null so the caller can ignore the

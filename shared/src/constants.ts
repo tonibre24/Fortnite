@@ -118,32 +118,44 @@ export const SINCE_GROUNDED_MAX = 255;
 
 // ------------------------------------------------------------ map generation
 
-export const POI_COUNT = 8;
-/** POIs are placed on a jittered grid of this many cells per axis. */
+/**
+ * POIs occupy the eight non-centre cells of a 3x3 grid. Leaving the middle
+ * empty keeps the lobby spawn ring clear of buildings.
+ */
 export const POI_GRID = 3;
+export const POI_COUNT = POI_GRID * POI_GRID - 1;
 /** Fraction of a grid cell a POI centre may wander from the cell centre. */
 export const POI_JITTER = 0.22;
 export const POI_MIN_BUILDINGS = 3;
 export const POI_MAX_BUILDINGS = 6;
 export const POI_RADIUS = 34;
+/** Rejection-sampling budget when fitting a building into a POI. */
+export const BUILDING_PLACEMENT_ATTEMPTS = 24;
+/** Clear ground kept between neighbouring buildings. */
+export const BUILDING_GAP = 3;
 
-export const BUILDING_MIN_SIZE = 8;
+export const BUILDING_MIN_SIZE = 9;
 export const BUILDING_MAX_SIZE = 18;
 export const BUILDING_STOREY_HEIGHT = 3.6;
 export const BUILDING_MAX_STOREYS = 2;
 export const BUILDING_WALL_THICKNESS = 0.4;
+export const BUILDING_FLOOR_THICKNESS = 0.3;
 export const BUILDING_DOOR_WIDTH = 2.4;
 export const BUILDING_DOOR_HEIGHT = 2.6;
-/** Chance a building gets an external ramp to its roof / upper floor. */
+/** Chance a building gets an external stair up to its roof. */
 export const BUILDING_RAMP_CHANCE = 0.55;
-export const RAMP_STEP_COUNT = 8;
-export const RAMP_WIDTH = 2.2;
+
+/** Rise per step. Must stay below STEP_HEIGHT or stairs become unclimbable. */
+export const STAIR_RISE = 0.45;
+export const STAIR_RUN = 0.62;
+export const STAIR_WIDTH = 2.2;
 
 export const HILL_COUNT = 26;
 export const HILL_MIN_RADIUS = 8;
 export const HILL_MAX_RADIUS = 22;
 export const HILL_MIN_TIERS = 2;
-export const HILL_MAX_TIERS = 5;
+export const HILL_MAX_TIERS = 12;
+/** Also a step height, so hillsides stay walkable. */
 export const HILL_TIER_HEIGHT = 0.5;
 
 export const TREE_COUNT = 320;
@@ -156,8 +168,12 @@ export const ROCK_COUNT = 90;
 export const ROCK_MIN_SIZE = 1.2;
 export const ROCK_MAX_SIZE = 3.4;
 
-/** Keep scatter props this far away from POI centres so streets stay clear. */
+/** Keep scatter props outside the built-up part of a POI so streets stay clear. */
 export const SCATTER_POI_CLEARANCE = 6;
+/** Scatter placement attempts before giving up on a prop. */
+export const SCATTER_ATTEMPTS = 8;
+/** Radius around the map centre kept free of props, for the lobby spawn ring. */
+export const SPAWN_CLEARANCE_RADIUS = 38;
 
 // -------------------------------------------------------------------- spawns
 

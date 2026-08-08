@@ -36,6 +36,9 @@ export class Predictor {
   private readonly smoothing: Vec3 = { x: 0, y: 0, z: 0 };
 
   initialized = false;
+  /** Diagnostic hook: fired whenever a reconciliation actually moved us. */
+  onCorrection: ((before: PlayerState, after: PlayerState, lastProcessedSeq: number, pending: number) => void) | null =
+    null;
   /** Distance between prediction and replayed authority at the last snapshot. */
   lastError = 0;
   maxError = 0;
@@ -74,6 +77,7 @@ export class Predictor {
       this.pending.shift();
     }
 
+
     const before = clonePlayerState(this.state);
     copyPlayerState(this.state, authoritative);
     for (const cmd of this.pending) {
@@ -95,6 +99,7 @@ export class Predictor {
     }
 
     this.correctionCount += 1;
+    this.onCorrection?.(before, this.state, lastProcessedSeq, this.pending.length);
     if (error > RECONCILE_SNAP_DISTANCE) {
       // Too far wrong to hide - teleport rather than slide across the map.
       this.smoothing.x = 0;
