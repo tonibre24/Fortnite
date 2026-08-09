@@ -21,6 +21,10 @@
 
 ## Conventions
 - No new dependencies without asking.
-- No assets. Three.js primitives with flat colors only.
+- No assets. Three.js primitives with flat colors only, and audio synthesised
+  at runtime - no sound files either.
+- The AudioContext is only created inside a user gesture; browsers block it
+  otherwise. Anything positional goes through a PannerNode and is capped by
+  category in client/src/audio/AudioSystem.ts.
 - Run `npm run check` and `npm run sim` after every change.
 - One phase = one commit. Stop and summarize after each phase.

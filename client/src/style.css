@@ -351,7 +351,7 @@ body {
 #killfeed {
   position: absolute;
   right: 24px;
-  top: 250px;
+  top: 274px;
   text-align: right;
   font-size: 13px;
 }
@@ -436,4 +436,37 @@ body {
 
 #hint.hidden {
   display: none;
+}
+
+/* ---------------------------------------------------------------- volume */
+
+#volume {
+  position: absolute;
+  right: 24px;
+  top: 242px;
+  width: 190px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  opacity: 0.75;
+  pointer-events: auto;
+}
+
+#volume label {
+  letter-spacing: 0.06em;
+}
+
+#volume input {
+  pointer-events: auto;
+  flex: 1;
+  height: 3px;
+  accent-color: #6ee7a0;
+  cursor: pointer;
+}
+
+#volume-value {
+  min-width: 26px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }

@@ -324,6 +324,53 @@ export const MINIMAP_PLAYER_SIZE = 5;
 /** Frames averaged before the HUD updates its frame-time figure. */
 export const PERF_SAMPLE_FRAMES = 30;
 
+// --------------------------------------------------------------------- audio
+
+/** Master volume before the player touches the slider, and where it persists. */
+export const AUDIO_DEFAULT_VOLUME = 0.7;
+export const AUDIO_VOLUME_KEY = 'br.audio.volume';
+
+/** Inverse-distance rolloff for positional sources, in world units. */
+export const AUDIO_REF_DISTANCE = 7;
+export const AUDIO_MAX_DISTANCE = 240;
+export const AUDIO_ROLLOFF = 1.1;
+
+/**
+ * Hard ceilings on simultaneous voices. Twenty players in a firefight would
+ * otherwise spawn oscillators faster than they retire, and the mix turns to mud
+ * long before the CPU notices.
+ */
+export const AUDIO_MAX_SHOT_VOICES = 5;
+export const AUDIO_MAX_IMPACT_VOICES = 4;
+export const AUDIO_MAX_STEP_VOICES = 3;
+export const AUDIO_MAX_PICKUP_VOICES = 3;
+export const AUDIO_MAX_UI_VOICES = 2;
+
+/** Distance a player covers between footsteps. */
+export const AUDIO_STEP_DISTANCE = 2.4;
+/** Past this, another player's footsteps are not worth a voice. */
+export const AUDIO_STEP_RANGE = 32;
+
+/** A loud one-shot pulls the ambient beds down so it can cut through. */
+export const AUDIO_DUCK_DEPTH = 0.42;
+export const AUDIO_DUCK_ATTACK = 0.015;
+export const AUDIO_DUCK_RELEASE = 0.28;
+
+/** Storm drone: silent at the centre, full at the wall and beyond. */
+export const AUDIO_STORM_GAIN = 0.5;
+/** Distance inside the wall over which the drone fades up. */
+export const AUDIO_STORM_FADE = 80;
+
+export const AUDIO_BUS_GAIN = 0.34;
+export const AUDIO_WIND_GAIN = 0.45;
+/** Fall speed mapping to full glider wind. */
+export const AUDIO_WIND_FULL_SPEED = 55;
+
+/** Seconds of noise in a looping bed buffer. */
+export const AUDIO_NOISE_LOOP_SECONDS = 2;
+/** Ramp used whenever a continuous bed changes level. */
+export const AUDIO_BED_RAMP = 0.12;
+
 // ------------------------------------------------------------------ gameplay
 
 export const MAX_PLAYERS = 20;

@@ -69,6 +69,12 @@ See [CLAUDE.md](CLAUDE.md) for the working agreements.
   lobby.
 - A player whose socket drops is removed from the world on the spot, so the
   round's alive count stays honest and a last-player-standing win still fires.
+- Procedural audio, synthesised at runtime with the Web Audio API - no files,
+  matching the no-assets rule. Gunfire per weapon class, hit and damage
+  feedback, eliminations, loot and chests, footsteps, the bus, glider wind, a
+  storm drone that rises as the wall closes, phase warnings and a victory
+  sting. Anything with a world position is spatialised through a PannerNode,
+  voices are capped per category, and the master volume persists.
 
 ## Sim harness knobs
 

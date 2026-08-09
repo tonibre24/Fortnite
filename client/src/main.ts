@@ -1,4 +1,5 @@
 import './style.css';
+import * as THREE from 'three';
 import {
   BUS_SIZE_Y,
   EventType,
@@ -11,6 +12,7 @@ import {
   PERF_SAMPLE_FRAMES,
   RoundPhase,
   SHIELD_POTION_USE_TICKS,
+  StateFlag,
   STORM_PHASES,
   TICK_RATE,
   isConsumableKind,
@@ -24,6 +26,7 @@ import {
   weaponStats,
   type GameEvent,
 } from '@br/shared';
+import { GameAudio } from './audio/GameAudio.js';
 import { GameClient } from './game/GameClient.js';
 import { InputSampler } from './input/InputSampler.js';
 import { PlayerView } from './render/PlayerView.js';
@@ -57,6 +60,7 @@ const tracers = new Tracers(renderer.scene);
 const lootView = new LootView(renderer.scene);
 const roundView = new RoundView(renderer.scene);
 const minimap = new Minimap();
+const audio = new GameAudio();
 
 const client = new GameClient({
   url: serverUrl(),
@@ -65,6 +69,22 @@ const client = new GameClient({
   onStatus: (status, detail) => hud.setStatus(status, detail),
 });
 client.connect();
+
+/**
+ * Browsers refuse to start an AudioContext outside a user gesture, so the first
+ * click or key press on the page creates it. The same click is the one that
+ * captures the mouse, so nothing extra is asked of the player.
+ */
+function unlockAudio(): void {
+  audio.unlock();
+  window.removeEventListener('pointerdown', unlockAudio);
+  window.removeEventListener('keydown', unlockAudio);
+}
+window.addEventListener('pointerdown', unlockAudio);
+window.addEventListener('keydown', unlockAudio);
+
+hud.setVolume(audio.volume);
+hud.onVolumeChange = (value) => audio.setVolume(value);
 
 let worldView: WorldView | null = null;
 let worldVersion = -1;
@@ -133,6 +153,7 @@ function nameOf(id: number): string {
 }
 
 function handleEvent(event: GameEvent, now: number): void {
+  audio.handleEvent(event, client.playerId);
   switch (event.type) {
     case EventType.Shot:
       if (client.map !== null) tracers.add(event, client.map, now);
@@ -258,6 +279,33 @@ function buildStats(): string[] {
   ];
 }
 
+const listenerForward = new THREE.Vector3();
+const listenerUp = new THREE.Vector3();
+
+/**
+ * Drives the listener from the camera and hands the audio layer the state it
+ * needs. Done after the camera has been placed for this frame, so direction is
+ * never a frame stale.
+ */
+function updateAudio(): void {
+  renderer.camera.getWorldDirection(listenerForward);
+  listenerUp.set(0, 1, 0).applyQuaternion(renderer.camera.quaternion);
+  audio.system.setListener(renderer.camera.position, listenerForward, listenerUp);
+
+  const state = client.predictor.state;
+  audio.update(
+    client.playerId,
+    state.pos,
+    state.vel.y,
+    state.mode,
+    (state.flags & StateFlag.OnGround) !== 0,
+    client.alive,
+    client.remotes,
+    client.loot,
+    client.round,
+  );
+}
+
 function frame(): void {
   const now = performance.now();
   client.update(now);
@@ -316,6 +364,7 @@ function frame(): void {
   );
   roundView.update(client.round);
   lootView.update(client.loot, now);
+  updateAudio();
   tracers.update(now);
   tracers.flush();
   hud.update(now, dequantizeYaw(client.predictor.state.yawQ));

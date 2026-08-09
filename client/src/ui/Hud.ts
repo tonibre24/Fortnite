@@ -58,6 +58,12 @@ export class Hud {
   private readonly useBarFill = mustFind('usebar').querySelector('i') as HTMLElement;
   private readonly roundEl = mustFind('round');
   private readonly perfEl = mustFind('perf');
+  private readonly volumeSlider = mustFind('volume-slider') as HTMLInputElement;
+  private readonly volumeValue = mustFind('volume-value');
+
+  /** Set by the caller to receive slider moves, as a 0..1 fraction. */
+  onVolumeChange: ((value: number) => void) | null = null;
+  private volumeBound = false;
   private readonly slotEls: HTMLElement[] = [];
   private inventorySignature = '';
 
@@ -89,6 +95,22 @@ export class Hud {
 
   setPerf(text: string): void {
     this.perfEl.textContent = text;
+  }
+
+  /** Positions the slider, without firing the change callback. */
+  setVolume(value: number): void {
+    const percent = Math.round(value * 100);
+    this.volumeSlider.value = String(percent);
+    this.volumeValue.textContent = `${percent}%`;
+    // Bound once, lazily, so the initial position never echoes back out.
+    if (!this.volumeBound) {
+      this.volumeBound = true;
+      this.volumeSlider.addEventListener('input', () => {
+        const fraction = Number(this.volumeSlider.value) / 100;
+        this.volumeValue.textContent = `${this.volumeSlider.value}%`;
+        this.onVolumeChange?.(fraction);
+      });
+    }
   }
 
   setVitals(health: number, shield: number): void {
