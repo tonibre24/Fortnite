@@ -22,6 +22,8 @@ import {
 } from '@riftfront/shared';
 
 import { Avatar } from '../render/Avatar.js';
+import { buildAvatarRig, type AvatarRig } from '../render/AvatarRig.js';
+import { RiftField } from '../render/RiftField.js';
 import { CameraRig } from '../render/CameraRig.js';
 import { EffectsSystem } from '../render/Effects.js';
 import { Environment } from '../render/Environment.js';
@@ -61,9 +63,10 @@ export interface BenchOptions {
    * `player` measures what the game actually renders: the over-the-shoulder rig, with
    * everything behind the camera culled. `overview` parks a wide static camera above the
    * arena so nothing is culled — a strictly harder frame, and the one used for
-   * screenshots because it shows the whole map.
+   * screenshots because it shows the whole map. `boundary` looks out across the wall at
+   * the rift field, which is the only way to check that effect without playing.
    */
-  camera: 'player' | 'overview';
+  camera: 'player' | 'overview' | 'boundary';
 }
 
 export const DEFAULT_BENCH_OPTIONS: BenchOptions = {
@@ -126,6 +129,8 @@ export class BenchHarness {
   private readonly environment: Environment;
   private readonly scenery: ReturnType<typeof buildArenaScenery>;
   private readonly props: ReturnType<typeof buildProps> | null;
+  private readonly avatarRig: AvatarRig;
+  private readonly rift: RiftField | null;
   private readonly effects: EffectsSystem;
   private readonly cameraRig: CameraRig;
   private readonly stats: RenderStats;
@@ -141,6 +146,9 @@ export class BenchHarness {
   };
   private readonly scratchOrigin: Vec3 = { x: 0, y: 0, z: 0 };
   private readonly scratchEnd: Vec3 = { x: 0, y: 0, z: 0 };
+
+  private readonly overviewTarget = new Vector3(0, 2, 2);
+  private readonly boundaryTarget = new Vector3(-70, 6, -74);
 
   private simulatedMs = 0;
   private lastCpuMs = 0;
@@ -175,6 +183,8 @@ export class BenchHarness {
     this.effects = new EffectsSystem(this.scene);
     this.cameraRig = new CameraRig(this.scene, this.colliders);
 
+    this.avatarRig = buildAvatarRig(this.scene);
+    this.rift = options.storm ? new RiftField(this.scene) : null;
     this.stats = new RenderStats(this.scene);
 
     this.spawnBots(Math.max(1, Math.min(options.players, 64)));
@@ -201,6 +211,7 @@ export class BenchHarness {
         state: createMovementState(position),
         avatar: new Avatar(this.scene, id, {
           isLocal: i === 0,
+          rig: this.avatarRig,
           environment: this.environment,
         }),
         yaw: spawn.yaw,
@@ -227,8 +238,9 @@ export class BenchHarness {
     const local = this.bots[0];
     if (local) {
       this.environment.focus(local.state.position);
-      if (this.options.camera === 'overview') {
-        this.applyOverviewCamera();
+      this.rift?.update(dtSeconds, local.state.position);
+      if (this.options.camera === 'overview' || this.options.camera === 'boundary') {
+        this.applyStaticCamera();
       } else {
         this.cameraRig.update(
           {
@@ -247,11 +259,16 @@ export class BenchHarness {
     this.lastCpuMs = performance.now() - cpuStart;
   }
 
-  /** A fixed three-quarter view of the whole arena, looking into the low sun. */
-  private applyOverviewCamera(): void {
+  /** Fixed vantage points: the whole arena, or the rift boundary seen from inside it. */
+  private applyStaticCamera(): void {
     const camera = this.cameraRig.camera;
+    if (this.options.camera === 'boundary') {
+      camera.position.set(-14, 13, -14);
+      camera.setTarget(this.boundaryTarget);
+      return;
+    }
     camera.position.set(-38, 26, -40);
-    camera.setTarget(new Vector3(0, 2, 2));
+    camera.setTarget(this.overviewTarget);
   }
 
   private stepBot(bot: Bot, dtSeconds: number): void {
@@ -284,6 +301,8 @@ export class BenchHarness {
       sprinting: bot.sprinting,
       aiming: bot.aiming,
       alive: true,
+      grounded: bot.state.grounded,
+      verticalVelocity: bot.state.velocity.y,
       dtSeconds,
     });
 
@@ -383,6 +402,8 @@ export class BenchHarness {
     for (const bot of this.bots) bot.avatar.dispose();
     this.bots.length = 0;
     this.stats.dispose();
+    this.rift?.dispose();
+    this.avatarRig.dispose();
     this.props?.dispose();
     this.effects.dispose();
     this.cameraRig.dispose();

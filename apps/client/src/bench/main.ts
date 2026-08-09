@@ -36,7 +36,11 @@ function readOptions(overrides: Partial<BenchOptions> = {}): BenchOptions {
     return raw !== '0' && raw !== 'false';
   };
 
-  const camera = params.get('camera') === 'overview' ? 'overview' : DEFAULT_BENCH_OPTIONS.camera;
+  const requestedCamera = params.get('camera');
+  const camera =
+    requestedCamera === 'overview' || requestedCamera === 'boundary'
+      ? requestedCamera
+      : DEFAULT_BENCH_OPTIONS.camera;
 
   return {
     players: Number(params.get('players') ?? DEFAULT_BENCH_OPTIONS.players),

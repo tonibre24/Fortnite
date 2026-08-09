@@ -39,6 +39,8 @@ import { LocalPlayer } from '../game/LocalPlayer.js';
 import { RemotePlayerBuffer } from '../game/RemotePlayers.js';
 import { WeaponController } from '../game/WeaponController.js';
 import { Avatar } from '../render/Avatar.js';
+import { buildAvatarRig, type AvatarRig } from '../render/AvatarRig.js';
+import { RiftField } from '../render/RiftField.js';
 import { Environment } from '../render/Environment.js';
 import { buildProps } from '../render/Props.js';
 import { buildDecorPlan } from '../render/decorPlan.js';
@@ -79,6 +81,8 @@ export class GameApp {
   private scenery: ReturnType<typeof buildArenaScenery> | null = null;
   private props: ReturnType<typeof buildProps> | null = null;
   private environment: Environment | null = null;
+  private avatarRig: AvatarRig | null = null;
+  private rift: RiftField | null = null;
 
   private readonly avatars = new Map<string, Avatar>();
   private readonly remotes = new RemotePlayerBuffer();
@@ -204,6 +208,8 @@ export class GameApp {
       skipVisualIds: new Set(decor.replacedVisualIds),
     });
     this.props = buildProps(scene, decor, { environment: this.environment });
+    this.avatarRig = buildAvatarRig(scene);
+    this.rift = new RiftField(scene);
     this.effects = new EffectsSystem(scene);
     this.cameraRig = new CameraRig(scene, this.colliders);
 
@@ -555,6 +561,10 @@ export class GameApp {
       sprinting: self?.sprinting ?? false,
       aiming: self?.aiming ?? false,
       alive: self?.alive ?? true,
+      // Predicted locally rather than replicated, so the local avatar's airborne poses
+      // start on the same frame the jump does.
+      grounded: local.grounded,
+      verticalVelocity: local.velocity.y,
       dtSeconds,
     });
 
@@ -570,6 +580,8 @@ export class GameApp {
     // The shadow frustum is fitted around the local player, so it has to be re-centred
     // before the camera renders.
     this.environment?.focus(localPosition);
+    this.rift?.update(dtSeconds, localPosition);
+    this.hud.setRiftTint(this.rift?.screenTint ?? 0);
 
     // Camera follows the smoothed local position.
     this.cameraRig?.update(
@@ -589,6 +601,7 @@ export class GameApp {
 
     const avatar = new Avatar(this.scene!, playerId, {
       isLocal,
+      rig: this.avatarRig!,
       environment: this.environment ?? undefined,
     });
     this.avatars.set(playerId, avatar);
@@ -1042,6 +1055,8 @@ export class GameApp {
     this.input?.dispose();
     this.audio.dispose();
     this.effects?.dispose();
+    this.rift?.dispose();
+    this.avatarRig?.dispose();
     this.props?.dispose();
     this.scenery?.dispose();
     this.environment?.dispose();

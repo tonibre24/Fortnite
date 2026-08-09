@@ -1,219 +1,355 @@
 import { Color3 } from '@babylonjs/core/Maths/math.color';
-import { Vector3 } from '@babylonjs/core/Maths/math.vector';
-import { type Mesh } from '@babylonjs/core/Meshes/mesh';
-import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder';
+import { Matrix, Quaternion, Vector3 } from '@babylonjs/core/Maths/math.vector';
+import type { Mesh } from '@babylonjs/core/Meshes/mesh';
+import type { Skeleton } from '@babylonjs/core/Bones/skeleton';
 import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial';
-import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
 import type { Scene } from '@babylonjs/core/scene';
-import { PLAYER_HEAD_HEIGHT, hashSeed } from '@riftfront/shared';
+import { clamp, hashSeed } from '@riftfront/shared';
+import { AvatarBone, MUZZLE_BONE_OFFSET, type AvatarRig } from './AvatarRig.js';
 import type { Environment } from './Environment.js';
+import { selectPose, type AvatarPose } from './avatarPose.js';
 
 /**
- * An original low-poly character built from primitives.
+ * One player: a low-poly articulated figure, posed procedurally from movement state.
  *
- * The silhouette is deliberately blocky and top-heavy so players read instantly at
- * range, and each player gets a distinct hue derived from their session id. There is no
- * skeletal animation: limbs are driven procedurally, which costs almost nothing and
- * keeps the vertical slice free of an animation pipeline.
+ * The geometry and skeleton come from the shared `AvatarRig`, so every player is a clone
+ * over the same vertex buffers and costs exactly one draw call. Posing is direct bone
+ * matrix writes — no animation clips, no blending graph, no library.
+ *
+ * Which pose to play is decided by `avatarPose.ts`; this module owns what each pose does
+ * to the bones. Aiming is a modifier rather than a pose: it raises both arms onto the
+ * weapon and pitches the chest with the camera, over whatever the legs are doing.
  */
 
-const BODY_HEIGHT = 0.78;
-const LEG_HEIGHT = 0.72;
+export type { AvatarPose } from './avatarPose.js';
+export { selectPose } from './avatarPose.js';
 
-export interface AvatarOptions {
-  /** Local player avatars are hidden from their own camera except in third person. */
-  isLocal: boolean;
-  /** When supplied, the avatar casts and receives sun shadows. */
-  environment?: Environment;
+export interface AvatarUpdate {
+  position: { x: number; y: number; z: number };
+  yaw: number;
+  pitch: number;
+  moving: boolean;
+  sprinting: boolean;
+  aiming: boolean;
+  alive: boolean;
+  grounded: boolean;
+  /** Vertical velocity in m/s; negative is falling. */
+  verticalVelocity: number;
+  dtSeconds: number;
+}
+
+/** Per-bone rotation targets for a pose, in radians. Plain data, no engine types. */
+interface PoseTargets {
+  chestPitch: number;
+  chestRoll: number;
+  headPitch: number;
+  armLeftPitch: number;
+  armLeftRoll: number;
+  armRightPitch: number;
+  armRightRoll: number;
+  legLeftPitch: number;
+  legRightPitch: number;
+  /** Barrel elevation. Separate from the arm so the weapon never points at the sky. */
+  weaponPitch: number;
+  /** Vertical offset of the whole figure — a crouch on landing, a bob on stride. */
+  bodyLift: number;
 }
 
 export class Avatar {
-  readonly root: TransformNode;
-  /** Yaws with the camera; carries the upper body and weapon. */
-  private readonly torso: TransformNode;
-  private readonly head: Mesh;
-  private readonly weapon: Mesh;
-  private readonly weaponMuzzle: TransformNode;
-  private readonly legLeft: Mesh;
-  private readonly legRight: Mesh;
-  private readonly armLeft: Mesh;
-  private readonly armRight: Mesh;
-  private readonly meshes: Mesh[] = [];
-  private readonly materials: StandardMaterial[] = [];
+  readonly mesh: Mesh;
+  private readonly skeleton: Skeleton;
+  private readonly material: StandardMaterial;
+  private readonly environment: Environment | undefined;
 
+  /** Smoothed animation state. Nothing here allocates once construction is done. */
   private strideTime = 0;
+  private readonly targets: PoseTargets = blankTargets();
+  private readonly current: PoseTargets = blankTargets();
+  private pose: AvatarPose = 'idle';
+
+  private readonly scratchQuaternion = new Quaternion();
+  private readonly scratchOffset = new Vector3();
+  private readonly scratchScale = new Vector3(1, 1, 1);
+  private readonly muzzleWorld = new Vector3();
+  private readonly boneOffsets: Vector3[] = [];
+
   private disposed = false;
 
   constructor(
-    private readonly scene: Scene,
+    scene: Scene,
     readonly playerId: string,
-    options: AvatarOptions,
+    options: { isLocal: boolean; rig: AvatarRig; environment?: Environment },
   ) {
-    const hue = (hashSeed(playerId) % 360) / 360;
-    const primary = Color3.FromHSV(hue * 360, 0.62, 0.92);
-    const secondary = Color3.FromHSV((hue * 360 + 28) % 360, 0.45, 0.42);
+    const hue = hashSeed(playerId) % 360;
+    const primary = Color3.FromHSV(hue, 0.58, 0.9);
 
-    const bodyMat = this.material(`avatar-body-${playerId}`, primary, 0.16);
-    const trimMat = this.material(`avatar-trim-${playerId}`, secondary, 0.05);
-    const gunMat = this.material(`avatar-gun-${playerId}`, Color3.FromHexString('#2b3244'), 0.02);
+    this.material = new StandardMaterial(`avatar-${playerId}`, scene);
+    this.material.diffuseColor = primary;
+    this.material.specularColor = Color3.Black();
+    this.material.emissiveColor = primary.scale(0.12);
 
-    this.root = new TransformNode(`avatar-${playerId}`, scene);
-    this.torso = new TransformNode(`avatar-torso-${playerId}`, scene);
-    this.torso.parent = this.root;
-    this.torso.position.y = LEG_HEIGHT;
+    this.mesh = options.rig.template.clone(`avatar-${playerId}`);
+    this.mesh.setEnabled(true);
+    this.mesh.material = this.material;
+    this.mesh.isPickable = false;
+    this.mesh.alwaysSelectAsActiveMesh = false;
+    // Each player needs their own posed skeleton; the geometry stays shared.
+    this.skeleton = options.rig.skeleton.clone(`avatar-skeleton-${playerId}`);
+    this.skeleton.useTextureToStoreBoneMatrices = false;
+    this.mesh.skeleton = this.skeleton;
+    this.mesh.numBoneInfluencers = 1;
+    this.mesh.rotationQuaternion = Quaternion.Identity();
 
-    const chest = this.box(`chest-${playerId}`, 0.62, BODY_HEIGHT, 0.38, bodyMat);
-    chest.parent = this.torso;
-    chest.position.y = BODY_HEIGHT / 2;
-
-    // A shoulder yoke widens the silhouette so players are readable side-on.
-    const yoke = this.box(`yoke-${playerId}`, 0.86, 0.18, 0.42, trimMat);
-    yoke.parent = this.torso;
-    yoke.position.y = BODY_HEIGHT - 0.06;
-
-    this.head = this.box(`head-${playerId}`, 0.36, 0.36, 0.36, bodyMat);
-    this.head.parent = this.torso;
-    this.head.position.y = PLAYER_HEAD_HEIGHT - LEG_HEIGHT;
-
-    // Visor: an asymmetric marker that makes facing direction obvious.
-    const visor = this.box(`visor-${playerId}`, 0.3, 0.11, 0.06, trimMat);
-    visor.parent = this.head;
-    visor.position.set(0, 0.03, 0.19);
-
-    this.armLeft = this.box(`arm-l-${playerId}`, 0.17, 0.6, 0.17, trimMat);
-    this.armLeft.parent = this.torso;
-    this.armLeft.setPivotPoint(new Vector3(0, 0.3, 0));
-    this.armLeft.position.set(-0.4, BODY_HEIGHT - 0.36, 0);
-
-    this.armRight = this.box(`arm-r-${playerId}`, 0.17, 0.6, 0.17, trimMat);
-    this.armRight.parent = this.torso;
-    this.armRight.setPivotPoint(new Vector3(0, 0.3, 0));
-    this.armRight.position.set(0.4, BODY_HEIGHT - 0.36, 0);
-
-    this.legLeft = this.box(`leg-l-${playerId}`, 0.2, LEG_HEIGHT, 0.2, trimMat);
-    this.legLeft.parent = this.root;
-    this.legLeft.setPivotPoint(new Vector3(0, LEG_HEIGHT / 2, 0));
-    this.legLeft.position.set(-0.16, LEG_HEIGHT / 2, 0);
-
-    this.legRight = this.box(`leg-r-${playerId}`, 0.2, LEG_HEIGHT, 0.2, trimMat);
-    this.legRight.parent = this.root;
-    this.legRight.setPivotPoint(new Vector3(0, LEG_HEIGHT / 2, 0));
-    this.legRight.position.set(0.16, LEG_HEIGHT / 2, 0);
-
-    this.weapon = this.box(`weapon-${playerId}`, 0.11, 0.16, 0.86, gunMat);
-    this.weapon.parent = this.torso;
-    this.weapon.position.set(0.3, BODY_HEIGHT - 0.24, 0.34);
-
-    this.weaponMuzzle = new TransformNode(`muzzle-${playerId}`, scene);
-    this.weaponMuzzle.parent = this.weapon;
-    this.weaponMuzzle.position.set(0, 0, 0.5);
-
-    if (options.isLocal) {
-      // The local avatar is visible (third person) but must never block its own camera.
-      for (const mesh of this.meshes) mesh.isPickable = false;
+    // Cache each bone's bind translation so posing never has to re-read a matrix.
+    for (const bone of this.skeleton.bones) {
+      const bind = bone.getBindMatrix();
+      this.boneOffsets.push(new Vector3(bind.m[12], bind.m[13], bind.m[14]));
     }
 
     this.environment = options.environment;
     if (this.environment) {
-      for (const mesh of this.meshes) {
-        mesh.receiveShadows = true;
-        this.environment.addShadowCaster(mesh);
-      }
+      this.mesh.receiveShadows = true;
+      this.environment.addShadowCaster(this.mesh);
     }
+
+    void options.isLocal;
   }
 
-  private readonly environment: Environment | undefined;
-
-  private material(name: string, colour: Color3, emissiveScale: number): StandardMaterial {
-    const material = new StandardMaterial(name, this.scene);
-    material.diffuseColor = colour;
-    material.emissiveColor = colour.scale(emissiveScale);
-    material.specularColor = new Color3(0.14, 0.15, 0.2);
-    material.specularPower = 32;
-    this.materials.push(material);
-    return material;
-  }
-
-  private box(
-    name: string,
-    width: number,
-    height: number,
-    depth: number,
-    material: StandardMaterial,
-  ): Mesh {
-    const mesh = MeshBuilder.CreateBox(name, { width, height, depth }, this.scene);
-    mesh.material = material;
-    mesh.isPickable = false;
-    this.meshes.push(mesh);
-    return mesh;
-  }
-
-  /** World position of the weapon muzzle, used to anchor the muzzle flash. */
+  /** World position of the barrel tip, used to anchor the muzzle flash. */
   getMuzzleWorldPosition(): Vector3 {
-    this.weaponMuzzle.computeWorldMatrix(true);
-    return this.weaponMuzzle.getAbsolutePosition();
+    if (this.disposed) return this.muzzleWorld;
+    const weapon = this.skeleton.bones[AvatarBone.Weapon];
+    // `getFinalMatrix` is the bone's accumulated transform: bone space to posed model
+    // space. It is *not* the skinning matrix, so the offset has to start in bone space.
+    Vector3.TransformCoordinatesToRef(
+      MUZZLE_BONE_OFFSET,
+      weapon.getFinalMatrix(),
+      this.muzzleWorld,
+    );
+    Vector3.TransformCoordinatesToRef(
+      this.muzzleWorld,
+      this.mesh.getWorldMatrix(),
+      this.muzzleWorld,
+    );
+    return this.muzzleWorld;
   }
 
   setVisible(visible: boolean): void {
     if (this.disposed) return;
-    this.root.setEnabled(visible);
+    this.mesh.setEnabled(visible);
   }
 
-  /**
-   * Applies replicated transform and animation flags.
-   * `dtSeconds` drives the procedural stride; `moving` comes from the server.
-   */
-  update(params: {
-    position: { x: number; y: number; z: number };
-    yaw: number;
-    pitch: number;
-    moving: boolean;
-    sprinting: boolean;
-    aiming: boolean;
-    alive: boolean;
-    dtSeconds: number;
-  }): void {
+  update(params: AvatarUpdate): void {
     if (this.disposed) return;
 
-    this.root.position.set(params.position.x, params.position.y, params.position.z);
-    // Babylon's Y rotation matches the shared yaw convention (0 faces +Z).
-    this.root.rotation.y = params.yaw;
+    this.pose = selectPose(params);
+    this.advanceStride(params);
+    this.buildTargets(params);
 
-    // Aiming pitches the upper body only, so the legs stay planted.
-    this.torso.rotation.x = params.aiming ? params.pitch * 0.55 : params.pitch * 0.28;
+    // Ease towards the pose so state flips (landing, starting a sprint) do not pop.
+    const blend = 1 - Math.exp(-params.dtSeconds * 16);
+    approach(this.current, this.targets, blend);
 
-    if (params.alive) {
-      const speed = params.sprinting ? 13 : 9;
-      this.strideTime += params.moving ? params.dtSeconds * speed : -this.strideTime * 0.25;
-      const swing = params.moving ? Math.sin(this.strideTime) * (params.sprinting ? 0.72 : 0.5) : 0;
+    this.applyTransform(params);
+    this.applyBones();
+  }
 
-      this.legLeft.rotation.x = swing;
-      this.legRight.rotation.x = -swing;
-      this.armLeft.rotation.x = params.aiming ? -1.15 : -swing * 0.55;
-      this.armRight.rotation.x = params.aiming ? -1.3 : swing * 0.55;
-      this.weapon.rotation.x = params.aiming ? -0.06 : 0.16;
-      this.weapon.position.x = params.aiming ? 0.06 : 0.3;
-      this.root.rotation.z = 0;
-      this.root.position.y = params.position.y;
+  private advanceStride(params: AvatarUpdate): void {
+    if (this.pose === 'walk' || this.pose === 'sprint') {
+      const rate = this.pose === 'sprint' ? 13.5 : 9;
+      this.strideTime += params.dtSeconds * rate;
     } else {
-      // Eliminated players fall over rather than vanishing instantly.
-      this.root.rotation.z = Math.PI / 2;
-      this.root.position.y = params.position.y + 0.35;
+      // Unwind to a neutral stance instead of freezing mid-step.
+      this.strideTime += (0 - (this.strideTime % (Math.PI * 2))) * params.dtSeconds * 4;
     }
+  }
+
+  private buildTargets(params: AvatarUpdate): void {
+    const t = this.targets;
+    const swing = Math.sin(this.strideTime);
+    const bob = Math.cos(this.strideTime * 2);
+
+    switch (this.pose) {
+      case 'idle':
+        t.chestPitch = 0.04;
+        t.chestRoll = 0;
+        t.legLeftPitch = 0;
+        t.legRightPitch = 0;
+        t.armLeftPitch = 0.06;
+        t.armRightPitch = -0.06;
+        t.armLeftRoll = 0.08;
+        t.armRightRoll = -0.08;
+        t.weaponPitch = 0.24;
+        t.bodyLift = 0;
+        break;
+      case 'walk':
+        t.chestPitch = 0.1;
+        t.chestRoll = swing * 0.05;
+        t.legLeftPitch = swing * 0.52;
+        t.legRightPitch = -swing * 0.52;
+        t.armLeftPitch = -swing * 0.42;
+        t.armRightPitch = swing * 0.42;
+        t.armLeftRoll = 0.1;
+        t.armRightRoll = -0.1;
+        t.weaponPitch = 0.28;
+        t.bodyLift = bob * 0.022;
+        break;
+      case 'sprint':
+        // The lean is what sells the speed: the legs alone read as a fast walk.
+        t.chestPitch = 0.3;
+        t.chestRoll = swing * 0.09;
+        t.legLeftPitch = swing * 0.86;
+        t.legRightPitch = -swing * 0.86;
+        t.armLeftPitch = -swing * 0.78 - 0.5;
+        t.armRightPitch = swing * 0.78 - 0.5;
+        t.armLeftRoll = 0.22;
+        t.armRightRoll = -0.22;
+        // Barrel dropped and tucked in: nobody sprints with a rifle at eye level.
+        t.weaponPitch = 0.62;
+        t.bodyLift = bob * 0.045 - 0.03;
+        break;
+      case 'jump':
+        t.chestPitch = -0.12;
+        t.chestRoll = 0;
+        t.legLeftPitch = 0.7;
+        t.legRightPitch = 0.34;
+        t.armLeftPitch = -1.1;
+        t.armRightPitch = -1.1;
+        t.armLeftRoll = 0.4;
+        t.armRightRoll = -0.4;
+        t.weaponPitch = 0.35;
+        t.bodyLift = 0;
+        break;
+      case 'freefall':
+        t.chestPitch = 0.16;
+        t.chestRoll = 0;
+        t.legLeftPitch = -0.42;
+        t.legRightPitch = 0.36;
+        t.armLeftPitch = -0.9;
+        t.armRightPitch = -0.7;
+        t.armLeftRoll = 0.75;
+        t.armRightRoll = -0.75;
+        t.weaponPitch = 0.4;
+        t.bodyLift = 0;
+        break;
+      case 'glide':
+        // Spread-eagle: arms swept wide, legs back, chest pitched into the air stream.
+        t.chestPitch = 0.42;
+        t.chestRoll = 0;
+        t.legLeftPitch = -0.66;
+        t.legRightPitch = -0.66;
+        t.armLeftPitch = -1.45;
+        t.armRightPitch = -1.45;
+        t.armLeftRoll = 1.15;
+        t.armRightRoll = -1.15;
+        t.weaponPitch = 0.5;
+        t.bodyLift = 0;
+        break;
+      case 'dead':
+        t.chestPitch = 0.2;
+        t.chestRoll = 0;
+        t.legLeftPitch = 0.3;
+        t.legRightPitch = 0.1;
+        t.armLeftPitch = 0.5;
+        t.armRightPitch = 0.4;
+        t.armLeftRoll = 0.5;
+        t.armRightRoll = -0.5;
+        t.weaponPitch = 0.2;
+        t.bodyLift = 0;
+        break;
+    }
+
+    // Aiming overrides the upper body wherever the player is alive and on their feet.
+    if (params.aiming && params.alive) {
+      t.chestPitch = params.pitch * 0.5;
+      t.armLeftPitch = -1.24;
+      t.armRightPitch = -1.34;
+      t.armLeftRoll = 0.46;
+      t.armRightRoll = -0.14;
+      // Level with the shot: the chest already carries half the aim pitch, so the
+      // weapon only needs the remainder to line up with where the bullet goes.
+      t.weaponPitch = -params.pitch * 0.5;
+    }
+
+    t.headPitch = clamp(params.pitch * 0.6 - t.chestPitch * 0.5, -0.6, 0.6);
+  }
+
+  private applyTransform(params: AvatarUpdate): void {
+    const lift = this.pose === 'dead' ? 0.4 : this.current.bodyLift;
+    this.mesh.position.set(params.position.x, params.position.y + lift, params.position.z);
+
+    // Eliminated players topple sideways rather than vanishing.
+    const roll = this.pose === 'dead' ? Math.PI / 2 : 0;
+    Quaternion.RotationYawPitchRollToRef(
+      params.yaw,
+      0,
+      roll,
+      this.mesh.rotationQuaternion ?? Quaternion.Identity(),
+    );
+  }
+
+  /** Writes every bone's local matrix straight into the skeleton. */
+  private applyBones(): void {
+    const c = this.current;
+    this.setBone(AvatarBone.Chest, c.chestPitch, 0, c.chestRoll);
+    this.setBone(AvatarBone.Head, c.headPitch, 0, 0);
+    this.setBone(AvatarBone.ArmLeft, c.armLeftPitch, 0, c.armLeftRoll);
+    this.setBone(AvatarBone.ArmRight, c.armRightPitch, 0, c.armRightRoll);
+    this.setBone(AvatarBone.LegLeft, c.legLeftPitch, 0, 0);
+    this.setBone(AvatarBone.LegRight, c.legRightPitch, 0, 0);
+    this.setBone(AvatarBone.Weapon, c.weaponPitch, 0, 0);
+  }
+
+  private setBone(index: number, pitch: number, yaw: number, roll: number): void {
+    const bone = this.skeleton.bones[index];
+    Quaternion.RotationYawPitchRollToRef(yaw, pitch, roll, this.scratchQuaternion);
+    this.scratchOffset.copyFrom(this.boneOffsets[index]);
+    Matrix.ComposeToRef(
+      this.scratchScale,
+      this.scratchQuaternion,
+      this.scratchOffset,
+      bone.getLocalMatrix(),
+    );
+    bone.markAsDirty();
   }
 
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
-    this.weaponMuzzle.dispose();
-    this.torso.dispose();
-    for (const mesh of this.meshes) {
-      this.environment?.removeShadowCaster(mesh);
-      mesh.dispose(false, false);
-    }
-    for (const material of this.materials) material.dispose();
-    this.meshes.length = 0;
-    this.materials.length = 0;
-    this.root.dispose();
+    this.environment?.removeShadowCaster(this.mesh);
+    this.mesh.dispose(false, false);
+    this.skeleton.dispose();
+    this.material.dispose();
   }
+}
+
+function blankTargets(): PoseTargets {
+  return {
+    chestPitch: 0,
+    chestRoll: 0,
+    headPitch: 0,
+    armLeftPitch: 0,
+    armLeftRoll: 0,
+    armRightPitch: 0,
+    armRightRoll: 0,
+    legLeftPitch: 0,
+    legRightPitch: 0,
+    weaponPitch: 0.24,
+    bodyLift: 0,
+  };
+}
+
+/** Frame-rate-independent ease of every channel towards its target. */
+function approach(current: PoseTargets, target: PoseTargets, blend: number): void {
+  current.chestPitch += (target.chestPitch - current.chestPitch) * blend;
+  current.chestRoll += (target.chestRoll - current.chestRoll) * blend;
+  current.headPitch += (target.headPitch - current.headPitch) * blend;
+  current.armLeftPitch += (target.armLeftPitch - current.armLeftPitch) * blend;
+  current.armLeftRoll += (target.armLeftRoll - current.armLeftRoll) * blend;
+  current.armRightPitch += (target.armRightPitch - current.armRightPitch) * blend;
+  current.armRightRoll += (target.armRightRoll - current.armRightRoll) * blend;
+  current.legLeftPitch += (target.legLeftPitch - current.legLeftPitch) * blend;
+  current.legRightPitch += (target.legRightPitch - current.legRightPitch) * blend;
+  current.weaponPitch += (target.weaponPitch - current.weaponPitch) * blend;
+  current.bodyLift += (target.bodyLift - current.bodyLift) * blend;
 }

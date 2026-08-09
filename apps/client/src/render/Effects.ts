@@ -209,8 +209,9 @@ class ParticlePool {
     this.mesh.receiveShadows = false;
     this.mesh.alwaysSelectAsActiveMesh = true;
     this.mesh.doNotSyncBoundingInfo = true;
-    // VFX draw last, over the world, and never write depth.
-    this.mesh.renderingGroupId = 1;
+    // Left in the default rendering group deliberately. Babylon clears the depth buffer
+    // between groups, so promoting VFX to group 1 would draw every spark and tracer
+    // straight through the walls. Alpha blending already puts them after the opaque pass.
     this.mesh.thinInstanceSetBuffer('matrix', this.matrices, 16, false);
     this.mesh.thinInstanceSetBuffer('color', this.colours, 4, false);
     void scene;

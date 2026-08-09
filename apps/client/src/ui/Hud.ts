@@ -111,6 +111,8 @@ export class Hud {
   private readonly damageArrows: DamageArrow[] = [];
   private readonly damageArrowsLayer: HTMLElement;
   private readonly damageVignette: HTMLElement;
+  private readonly riftTint: HTMLElement;
+  private riftTintAmount = -1;
   private readonly lowHealthOverlay: HTMLElement;
 
   private readonly banner: HTMLElement;
@@ -210,6 +212,7 @@ export class Hud {
     }
 
     this.damageVignette = el('div', { class: 'damage-vignette' });
+    this.riftTint = el('div', { class: 'rift-tint' });
     this.lowHealthOverlay = el('div', { class: 'low-health' });
     this.lowHealthOverlay.style.display = 'none';
 
@@ -229,6 +232,7 @@ export class Hud {
     ]);
 
     this.root = el('div', { id: 'hud', hidden: true }, [
+      this.riftTint,
       this.lowHealthOverlay,
       this.damageVignette,
       this.crosshair,
@@ -372,6 +376,20 @@ export class Hud {
    * Intensity scales with the damage taken, so a shotgun blast at point-blank range
    * reads differently from a stray rifle round — the punch is the information.
    */
+  /**
+   * Screen tint for the rift boundary, 0 to 1.
+   *
+   * Written every frame, so the value is compared before touching the DOM: a redundant
+   * style write is a forced style recalculation, and this one would happen 60 times a
+   * second for the entire match.
+   */
+  setRiftTint(amount: number): void {
+    const clamped = Math.round(clamp(amount, 0, 1) * 100) / 100;
+    if (clamped === this.riftTintAmount) return;
+    this.riftTintAmount = clamped;
+    this.riftTint.style.opacity = String(clamped);
+  }
+
   flashDamage(damage = 20): void {
     const intensity = clamp(0.42 + damage / 70, 0.42, 1);
     this.damageVignette.style.setProperty('--damage-intensity', intensity.toFixed(2));

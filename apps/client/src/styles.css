@@ -719,6 +719,21 @@ kbd {
 }
 
 /*
+ * Rift boundary tint. Driven from RiftField.screenTint, which ramps as the camera
+ * crosses the boundary rather than snapping, so the transition reads as walking into
+ * weather instead of a switch being thrown.
+ */
+.rift-tint {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  background:
+    radial-gradient(ellipse at 50% 50%, rgba(138, 107, 255, 0.14) 0%, rgba(64, 215, 255, 0.4) 100%),
+    linear-gradient(rgba(138, 107, 255, 0.22), rgba(138, 107, 255, 0.22));
+  mix-blend-mode: screen;
+}
+
+/*
  * Damage vignette. `--damage-intensity` is written from Hud.flashDamage() and scales
  * both how far the red reaches in from the edges and how hard the hit reads, so a
  * shotgun blast and a stray rifle round do not look identical.

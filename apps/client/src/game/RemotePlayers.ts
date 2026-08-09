@@ -25,6 +25,9 @@ interface Snapshot {
   sprinting: boolean;
   aiming: boolean;
   alive: boolean;
+  /** Replicated so remote avatars can play the airborne poses, not just the ground ones. */
+  grounded: boolean;
+  verticalVelocity: number;
 }
 
 /** ~1.5 s of history at 20 Hz. Bounded so a long match cannot grow memory. */
@@ -40,6 +43,8 @@ export interface InterpolatedTransform {
   sprinting: boolean;
   aiming: boolean;
   alive: boolean;
+  grounded: boolean;
+  verticalVelocity: number;
 }
 
 class RemoteEntity {
@@ -54,6 +59,8 @@ class RemoteEntity {
       latest.yaw = player.yaw;
       latest.pitch = player.pitch;
       latest.alive = player.alive;
+      latest.grounded = player.grounded;
+      latest.verticalVelocity = player.vy;
       return;
     }
 
@@ -66,6 +73,8 @@ class RemoteEntity {
       sprinting: player.sprinting,
       aiming: player.aiming,
       alive: player.alive,
+      grounded: player.grounded,
+      verticalVelocity: player.vy,
     });
 
     while (this.snapshots.length > MAX_SNAPSHOTS) this.snapshots.shift();
@@ -128,6 +137,8 @@ class RemoteEntity {
         sprinting: after.sprinting,
         aiming: after.aiming,
         alive: after.alive,
+        grounded: after.grounded,
+        verticalVelocity: after.verticalVelocity,
       };
       return this.lastRendered;
     }
@@ -155,6 +166,8 @@ function toTransform(snapshot: Snapshot): InterpolatedTransform {
     sprinting: snapshot.sprinting,
     aiming: snapshot.aiming,
     alive: snapshot.alive,
+    grounded: snapshot.grounded,
+    verticalVelocity: snapshot.verticalVelocity,
   };
 }
 

@@ -101,6 +101,9 @@ function parseArgs(argv) {
       case '--overview':
         args.camera = 'overview';
         break;
+      case '--boundary':
+        args.camera = 'boundary';
+        break;
       default:
         if (arg.startsWith('--')) throw new Error(`unknown flag ${arg}`);
     }
