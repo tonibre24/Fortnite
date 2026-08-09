@@ -26,6 +26,8 @@ import { CameraRig } from '../render/CameraRig.js';
 import { EffectsSystem } from '../render/Effects.js';
 import { Environment } from '../render/Environment.js';
 import { RenderStats } from '../render/RenderStats.js';
+import { buildProps } from '../render/Props.js';
+import { buildDecorPlan } from '../render/decorPlan.js';
 import { buildArenaScenery } from '../render/SceneBuilder.js';
 
 /**
@@ -123,6 +125,7 @@ export class BenchHarness {
   private readonly colliders = new ColliderIndex(getArena().colliders);
   private readonly environment: Environment;
   private readonly scenery: ReturnType<typeof buildArenaScenery>;
+  private readonly props: ReturnType<typeof buildProps> | null;
   private readonly effects: EffectsSystem;
   private readonly cameraRig: CameraRig;
   private readonly stats: RenderStats;
@@ -162,7 +165,13 @@ export class BenchHarness {
 
     this.environment = new Environment(this.scene);
     this.environment.setShadowsEnabled(options.shadows);
-    this.scenery = buildArenaScenery(this.scene, getArena(), { environment: this.environment });
+
+    const decor = options.props ? buildDecorPlan(getArena()) : null;
+    this.scenery = buildArenaScenery(this.scene, getArena(), {
+      environment: this.environment,
+      skipVisualIds: decor ? new Set(decor.replacedVisualIds) : undefined,
+    });
+    this.props = decor ? buildProps(this.scene, decor, { environment: this.environment }) : null;
     this.effects = new EffectsSystem(this.scene);
     this.cameraRig = new CameraRig(this.scene, this.colliders);
 
@@ -374,6 +383,7 @@ export class BenchHarness {
     for (const bot of this.bots) bot.avatar.dispose();
     this.bots.length = 0;
     this.stats.dispose();
+    this.props?.dispose();
     this.effects.dispose();
     this.cameraRig.dispose();
     this.scenery.dispose();

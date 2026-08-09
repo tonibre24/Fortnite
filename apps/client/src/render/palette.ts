@@ -116,6 +116,10 @@ export const DECOR = {
   rockAlt: '#8f8b7d',
   grass: '#7f9b4e',
   grassDry: '#a8a55c',
+  /** Arena floor: the base green, the sun-bleached patches and the worn fighting ring. */
+  groundBase: '#7c9450',
+  groundDry: '#a39c52',
+  groundWorn: '#94805a',
   shrub: '#4f7a44',
   treeTrunk: '#6b4f38',
   treeCanopy: '#4e7f4a',

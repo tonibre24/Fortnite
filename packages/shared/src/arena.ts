@@ -605,3 +605,41 @@ export function getArena(): ArenaDefinition {
 export function resetArenaCache(): void {
   cachedArena = null;
 }
+
+/**
+ * A stable fingerprint of the arena's *collision* geometry.
+ *
+ * Collision is the one part of the arena the client and the server must agree on
+ * byte-for-byte: the server simulates against it and the client predicts against it.
+ * Visual decoration is additive and client-side, and must never be able to change this
+ * number — `arena.test.ts` pins it to a golden value, so any edit that moves a collider
+ * fails loudly instead of quietly desynchronising prediction.
+ *
+ * Deliberately independent of `visuals`, and order-independent within a collider so a
+ * pure refactor of the builder cannot change it.
+ */
+export function arenaCollisionHash(arena: ArenaDefinition = getArena()): number {
+  // FNV-1a over a canonical text encoding, with coordinates quantised to a millimetre so
+  // floating-point noise in the builder cannot flip the hash.
+  let hash = 0x811c9dc5;
+  const feed = (text: string): void => {
+    for (let i = 0; i < text.length; i++) {
+      hash ^= text.charCodeAt(i);
+      hash = Math.imul(hash, 0x01000193);
+    }
+  };
+  const mm = (value: number): string => String(Math.round(value * 1000));
+
+  const ordered = [...arena.colliders].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  feed(arena.name);
+  for (const collider of ordered) {
+    feed(
+      `|${collider.id}:${mm(collider.min.x)},${mm(collider.min.y)},${mm(collider.min.z)}` +
+        `>${mm(collider.max.x)},${mm(collider.max.y)},${mm(collider.max.z)}`,
+    );
+  }
+  for (const spawn of arena.spawnPoints) {
+    feed(`|s${mm(spawn.position.x)},${mm(spawn.position.y)},${mm(spawn.position.z)}`);
+  }
+  return hash >>> 0;
+}

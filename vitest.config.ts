@@ -20,7 +20,14 @@ export default defineConfig({
         test: {
           name: 'unit',
           environment: 'node',
-          include: ['packages/**/src/**/*.test.ts', 'apps/server/src/**/*.test.ts'],
+          // Client tests are included, but only for the parts of the client that hold no
+          // rendering code — the decoration plan and the surface lookup are plain data,
+          // which is exactly why they live in their own modules.
+          include: [
+            'packages/**/src/**/*.test.ts',
+            'apps/server/src/**/*.test.ts',
+            'apps/client/src/**/*.test.ts',
+          ],
         },
       },
       {

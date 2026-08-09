@@ -40,6 +40,8 @@ import { RemotePlayerBuffer } from '../game/RemotePlayers.js';
 import { WeaponController } from '../game/WeaponController.js';
 import { Avatar } from '../render/Avatar.js';
 import { Environment } from '../render/Environment.js';
+import { buildProps } from '../render/Props.js';
+import { buildDecorPlan } from '../render/decorPlan.js';
 import { buildArenaScenery } from '../render/SceneBuilder.js';
 import { ConnectionError, NetworkClient } from '../net/NetworkClient.js';
 import { Hud } from '../ui/Hud.js';
@@ -75,6 +77,7 @@ export class GameApp {
   private cameraRig: CameraRig | null = null;
   private effects: EffectsSystem | null = null;
   private scenery: ReturnType<typeof buildArenaScenery> | null = null;
+  private props: ReturnType<typeof buildProps> | null = null;
   private environment: Environment | null = null;
 
   private readonly avatars = new Map<string, Avatar>();
@@ -189,7 +192,14 @@ export class GameApp {
     this.scene = scene;
 
     this.environment = new Environment(scene);
-    this.scenery = buildArenaScenery(scene, getArena(), { environment: this.environment });
+    // Decoration is generated from the arena's own seed, so every client builds the same
+    // world; it is additive and client-side and never touches a collider.
+    const decor = buildDecorPlan(getArena());
+    this.scenery = buildArenaScenery(scene, getArena(), {
+      environment: this.environment,
+      skipVisualIds: new Set(decor.replacedVisualIds),
+    });
+    this.props = buildProps(scene, decor, { environment: this.environment });
     this.effects = new EffectsSystem(scene);
     this.cameraRig = new CameraRig(scene, this.colliders);
 
@@ -1001,6 +1011,7 @@ export class GameApp {
     this.input?.dispose();
     this.audio.dispose();
     this.effects?.dispose();
+    this.props?.dispose();
     this.scenery?.dispose();
     this.environment?.dispose();
     this.cameraRig?.dispose();

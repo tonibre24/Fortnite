@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getArena, resetArenaCache } from './arena.js';
+import { arenaCollisionHash, getArena, resetArenaCache } from './arena.js';
 import { ColliderIndex, aabbOverlaps } from './collision.js';
 import { FIXED_DT, PLAYER_RADIUS, STEP_HEIGHT } from './constants.js';
 import { createMovementState, playerAABB, stepMovement, type InputCommand } from './movement.js';
@@ -44,6 +44,58 @@ describe('arena definition', () => {
 
   it('names distinct landmarks for orientation', () => {
     expect(arena.landmarks.length).toBeGreaterThanOrEqual(4);
+  });
+});
+
+describe('collision fingerprint', () => {
+  /**
+   * The golden hash of the arena's collision geometry.
+   *
+   * Client prediction and the server's authoritative simulation both run against these
+   * colliders, so the two must be bit-identical. Pinning the hash means any change to a
+   * collider, a spawn point or the arena's name has to be a deliberate edit to this line
+   * — and, critically, that purely visual work (decoration, props, lighting) can never
+   * silently move a collider "to make something look better".
+   *
+   * If this fails and the collider change was intended, update the constant and expect
+   * to re-check spawn placement and the movement tests alongside it.
+   */
+  const GOLDEN_COLLISION_HASH = 3005037445;
+
+  it('matches the pinned fingerprint', () => {
+    expect(arenaCollisionHash(arena)).toBe(GOLDEN_COLLISION_HASH);
+  });
+
+  it('is stable across rebuilds', () => {
+    resetArenaCache();
+    expect(arenaCollisionHash(getArena())).toBe(GOLDEN_COLLISION_HASH);
+  });
+
+  it('ignores visuals entirely', () => {
+    const decorated = {
+      ...arena,
+      visuals: [
+        ...arena.visuals,
+        {
+          id: 'not-a-collider',
+          size: { x: 1, y: 1, z: 1 },
+          position: { x: 0, y: 40, z: 0 },
+          rotation: { x: 0, y: 0, z: 0 },
+          material: 'accent' as const,
+        },
+      ],
+    };
+    expect(arenaCollisionHash(decorated)).toBe(GOLDEN_COLLISION_HASH);
+  });
+
+  it('changes when a collider moves', () => {
+    const moved = {
+      ...arena,
+      colliders: arena.colliders.map((collider, i) =>
+        i === 0 ? { ...collider, max: { ...collider.max, y: collider.max.y + 0.01 } } : collider,
+      ),
+    };
+    expect(arenaCollisionHash(moved)).not.toBe(GOLDEN_COLLISION_HASH);
   });
 });
 

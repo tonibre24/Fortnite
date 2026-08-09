@@ -60,6 +60,8 @@ function boot(): void {
   const build = (overrides: Partial<BenchOptions>): BenchHarness => {
     harness?.dispose();
     harness = new BenchHarness(canvas, readOptions(overrides));
+    // Exposed for ad-hoc renderer debugging from the devtools console (bench page only).
+    (window as unknown as { __benchScene?: unknown }).__benchScene = harness.scene;
     return harness;
   };
 
