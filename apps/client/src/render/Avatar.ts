@@ -6,6 +6,7 @@ import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial';
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
 import type { Scene } from '@babylonjs/core/scene';
 import { PLAYER_HEAD_HEIGHT, hashSeed } from '@riftfront/shared';
+import type { Environment } from './Environment.js';
 
 /**
  * An original low-poly character built from primitives.
@@ -22,6 +23,8 @@ const LEG_HEIGHT = 0.72;
 export interface AvatarOptions {
   /** Local player avatars are hidden from their own camera except in third person. */
   isLocal: boolean;
+  /** When supplied, the avatar casts and receives sun shadows. */
+  environment?: Environment;
 }
 
 export class Avatar {
@@ -109,7 +112,17 @@ export class Avatar {
       // The local avatar is visible (third person) but must never block its own camera.
       for (const mesh of this.meshes) mesh.isPickable = false;
     }
+
+    this.environment = options.environment;
+    if (this.environment) {
+      for (const mesh of this.meshes) {
+        mesh.receiveShadows = true;
+        this.environment.addShadowCaster(mesh);
+      }
+    }
   }
+
+  private readonly environment: Environment | undefined;
 
   private material(name: string, colour: Color3, emissiveScale: number): StandardMaterial {
     const material = new StandardMaterial(name, this.scene);
@@ -194,7 +207,10 @@ export class Avatar {
     this.disposed = true;
     this.weaponMuzzle.dispose();
     this.torso.dispose();
-    for (const mesh of this.meshes) mesh.dispose(false, false);
+    for (const mesh of this.meshes) {
+      this.environment?.removeShadowCaster(mesh);
+      mesh.dispose(false, false);
+    }
     for (const material of this.materials) material.dispose();
     this.meshes.length = 0;
     this.materials.length = 0;

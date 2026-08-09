@@ -27,7 +27,8 @@
     "format": "prettier --write \"**/*.{ts,tsx,js,json,css,html,md,yml,yaml}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,json,css,html,md,yml,yaml}\"",
     "verify": "pnpm lint && pnpm typecheck && pnpm test:all && pnpm build && pnpm verify:browser",
-    "verify:browser": "node scripts/verify-browser.mjs"
+    "verify:browser": "node scripts/verify-browser.mjs",
+    "bench": "node scripts/benchmark.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.19.0",

@@ -1,12 +1,11 @@
-import { Color3, Color4 } from '@babylonjs/core/Maths/math.color';
-import { Vector3 } from '@babylonjs/core/Maths/math.vector';
-import { DirectionalLight } from '@babylonjs/core/Lights/directionalLight';
-import { HemisphericLight } from '@babylonjs/core/Lights/hemisphericLight';
+import { Color3 } from '@babylonjs/core/Maths/math.color';
 import { Mesh } from '@babylonjs/core/Meshes/mesh';
 import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder';
 import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial';
 import type { Scene } from '@babylonjs/core/scene';
 import { getArena, type ArenaDefinition, type MaterialKey } from '@riftfront/shared';
+import type { Environment } from './Environment.js';
+import { SURFACES } from './palette.js';
 
 /**
  * Builds the arena's visual representation from the shared arena definition.
@@ -15,25 +14,11 @@ import { getArena, type ArenaDefinition, type MaterialKey } from '@riftfront/sha
  * that turns roughly 140 draw calls into 8, which is the single biggest win available
  * for a scene of this shape. Merged meshes are frozen (`freezeWorldMatrix`) because the
  * arena never moves.
+ *
+ * This module is strictly a *reader* of the shared arena: it never adds, moves or
+ * resizes anything the server also simulates. Decoration lives in `Props.ts` and is
+ * additive and client-only.
  */
-
-interface MaterialSpec {
-  diffuse: string;
-  emissive?: string;
-  specular?: string;
-}
-
-/** Original stylised palette: saturated, high-contrast, readable at a glance. */
-const PALETTE: Record<MaterialKey, MaterialSpec> = {
-  ground: { diffuse: '#2f4a57', specular: '#0a0f14' },
-  wall: { diffuse: '#1d2b3d', specular: '#050810' },
-  structure: { diffuse: '#7d8aa6', specular: '#141a26' },
-  platform: { diffuse: '#c2803f', specular: '#1a1208' },
-  accent: { diffuse: '#3fbfa5', emissive: '#0a2a25', specular: '#0b1a18' },
-  accentAlt: { diffuse: '#c95f7a', emissive: '#2a0d16', specular: '#1a0a0f' },
-  metal: { diffuse: '#9aa7bb', specular: '#3a4356' },
-  core: { diffuse: '#7b5bff', emissive: '#3a2a9a', specular: '#221a55' },
-};
 
 export interface ArenaScenery {
   meshes: Mesh[];
@@ -41,26 +26,47 @@ export interface ArenaScenery {
   dispose: () => void;
 }
 
-function makeMaterial(scene: Scene, key: MaterialKey): StandardMaterial {
-  const spec = PALETTE[key];
+export interface SceneryOptions {
+  /** Registers the merged meshes as shadow casters and enables shadow receiving. */
+  environment?: Environment;
+  /**
+   * Visual ids to leave out. The ground slab is skipped once the decorated terrain in
+   * `Props.ts` takes over drawing it.
+   */
+  skipVisualIds?: ReadonlySet<string>;
+}
+
+/**
+ * A flat-shaded matte surface. Specular is off entirely — a stylised low-poly scene wants
+ * a single readable value per face, and highlights only add noise at 1080p.
+ */
+export function makeSurfaceMaterial(scene: Scene, key: MaterialKey): StandardMaterial {
+  const spec = SURFACES[key];
   const material = new StandardMaterial(`mat-${key}`, scene);
   const diffuse = Color3.FromHexString(spec.diffuse);
   material.diffuseColor = diffuse;
-  material.specularColor = Color3.FromHexString(spec.specular ?? '#101010');
+  material.specularColor = Color3.Black();
   // A floor of self-illumination keeps unlit faces readable. Without it, surfaces facing
-  // away from the key light go almost black and enemy silhouettes disappear against them.
-  const emissive = spec.emissive ? Color3.FromHexString(spec.emissive) : diffuse.scale(0.22);
-  material.emissiveColor = emissive;
-  material.specularPower = 48;
-  // The arena has no dynamic lighting changes, so the material can be frozen.
-  material.freeze();
+  // away from the sun go almost black and enemy silhouettes disappear against them.
+  // The sun and the hemispheric fill together peak just under 1.0, so this floor is the
+  // only thing standing between a back-facing wall and pure black.
+  material.emissiveColor = spec.emissive
+    ? Color3.FromHexString(spec.emissive)
+    : diffuse.scale(0.11);
   return material;
 }
 
-export function buildArenaScenery(scene: Scene, arena: ArenaDefinition = getArena()): ArenaScenery {
+export function buildArenaScenery(
+  scene: Scene,
+  arena: ArenaDefinition = getArena(),
+  options: SceneryOptions = {},
+): ArenaScenery {
   const byMaterial = new Map<MaterialKey, Mesh[]>();
+  const skip = options.skipVisualIds;
 
   for (const visual of arena.visuals) {
+    if (skip?.has(visual.id)) continue;
+
     const box = MeshBuilder.CreateBox(
       visual.id,
       { width: visual.size.x, height: visual.size.y, depth: visual.size.z },
@@ -79,7 +85,7 @@ export function buildArenaScenery(scene: Scene, arena: ArenaDefinition = getAren
   const materials: StandardMaterial[] = [];
 
   for (const [key, group] of byMaterial) {
-    const material = makeMaterial(scene, key);
+    const material = makeSurfaceMaterial(scene, key);
     materials.push(material);
 
     const merged =
@@ -90,10 +96,11 @@ export function buildArenaScenery(scene: Scene, arena: ArenaDefinition = getAren
     merged.name = `arena-${key}`;
     merged.material = material;
     merged.isPickable = false;
-    merged.receiveShadows = false;
     merged.checkCollisions = false;
+    merged.receiveShadows = options.environment !== undefined;
     merged.freezeWorldMatrix();
     merged.doNotSyncBoundingInfo = true;
+    options.environment?.addShadowCaster(merged);
     meshes.push(merged);
   }
 
@@ -101,52 +108,16 @@ export function buildArenaScenery(scene: Scene, arena: ArenaDefinition = getAren
     meshes,
     materials,
     dispose: () => {
-      for (const mesh of meshes) mesh.dispose(false, false);
+      for (const mesh of meshes) {
+        options.environment?.removeShadowCaster(mesh);
+        mesh.dispose(false, false);
+      }
       for (const material of materials) {
         material.unfreeze();
         material.dispose();
       }
       meshes.length = 0;
       materials.length = 0;
-    },
-  };
-}
-
-export interface SceneLighting {
-  dispose: () => void;
-}
-
-/**
- * Two-light setup: a warm key light for shape readability and a cool hemispheric fill so
- * nothing in shadow becomes unreadable. Shadow maps are deliberately omitted — silhouette
- * clarity matters more than realism here, and it keeps the frame budget for gameplay.
- */
-export function buildLighting(scene: Scene): SceneLighting {
-  scene.clearColor = new Color4(0.15, 0.19, 0.29, 1);
-  scene.ambientColor = new Color3(0.42, 0.46, 0.58);
-
-  const key = new DirectionalLight('key-light', new Vector3(-0.55, -1, 0.35), scene);
-  key.intensity = 1.5;
-  key.diffuse = Color3.FromHexString('#fff2dd');
-  key.specular = Color3.FromHexString('#ffe6c0');
-
-  // The fill is deliberately strong. Readability beats mood in a shooter: a player in
-  // shadow must still be identifiable at 40 m.
-  const fill = new HemisphericLight('fill-light', new Vector3(0.2, 1, -0.3), scene);
-  fill.intensity = 1.05;
-  fill.diffuse = Color3.FromHexString('#bcd6ff');
-  fill.groundColor = Color3.FromHexString('#4a3f62');
-
-  // Light distance fog for depth cueing only; dense enough to hide an enemy would be a
-  // gameplay problem, not an aesthetic one.
-  scene.fogMode = 2; // FOGMODE_EXP
-  scene.fogColor = new Color3(0.15, 0.19, 0.29);
-  scene.fogDensity = 0.0032;
-
-  return {
-    dispose: () => {
-      key.dispose();
-      fill.dispose();
     },
   };
 }

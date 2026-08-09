@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Riftfront — render benchmark</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #0b0f16;
+        overflow: hidden;
+      }
+      #bench-canvas {
+        display: block;
+        width: 100%;
+        height: 100%;
+        outline: none;
+      }
+      #bench-output {
+        position: fixed;
+        left: 12px;
+        top: 12px;
+        margin: 0;
+        padding: 10px 14px;
+        max-height: 90vh;
+        overflow: auto;
+        font:
+          12px/1.5 ui-monospace,
+          SFMono-Regular,
+          Menlo,
+          monospace;
+        color: #d8e4f2;
+        background: rgba(6, 10, 18, 0.82);
+        border: 1px solid rgba(150, 180, 220, 0.25);
+        border-radius: 6px;
+        white-space: pre;
+        pointer-events: none;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="bench-canvas"></canvas>
+    <pre id="bench-output"></pre>
+    <script type="module" src="/src/bench/main.ts"></script>
+  </body>
+</html>

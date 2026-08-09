@@ -31,6 +31,12 @@ export default defineConfig({
     sourcemap: true,
     chunkSizeWarningLimit: 2048,
     rollupOptions: {
+      input: {
+        // The game, plus the scripted render benchmark. `bench.html` is a dev/CI tool
+        // that shares the real renderer; it links nothing the game does not already ship.
+        main: fileURLToPath(new URL('./index.html', import.meta.url)),
+        bench: fileURLToPath(new URL('./bench.html', import.meta.url)),
+      },
       output: {
         manualChunks: {
           // Babylon is by far the largest dependency; splitting it lets the browser

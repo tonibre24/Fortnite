@@ -39,7 +39,8 @@ import { LocalPlayer } from '../game/LocalPlayer.js';
 import { RemotePlayerBuffer } from '../game/RemotePlayers.js';
 import { WeaponController } from '../game/WeaponController.js';
 import { Avatar } from '../render/Avatar.js';
-import { buildArenaScenery, buildLighting } from '../render/SceneBuilder.js';
+import { Environment } from '../render/Environment.js';
+import { buildArenaScenery } from '../render/SceneBuilder.js';
 import { ConnectionError, NetworkClient } from '../net/NetworkClient.js';
 import { Hud } from '../ui/Hud.js';
 import { LandingScreen } from '../ui/LandingScreen.js';
@@ -74,7 +75,7 @@ export class GameApp {
   private cameraRig: CameraRig | null = null;
   private effects: EffectsSystem | null = null;
   private scenery: ReturnType<typeof buildArenaScenery> | null = null;
-  private lighting: ReturnType<typeof buildLighting> | null = null;
+  private environment: Environment | null = null;
 
   private readonly avatars = new Map<string, Avatar>();
   private readonly remotes = new RemotePlayerBuffer();
@@ -187,8 +188,8 @@ export class GameApp {
     scene.skipFrustumClipping = false;
     this.scene = scene;
 
-    this.lighting = buildLighting(scene);
-    this.scenery = buildArenaScenery(scene);
+    this.environment = new Environment(scene);
+    this.scenery = buildArenaScenery(scene, getArena(), { environment: this.environment });
     this.effects = new EffectsSystem(scene);
     this.cameraRig = new CameraRig(scene, this.colliders);
 
@@ -546,6 +547,10 @@ export class GameApp {
       avatar.update({ ...transform, dtSeconds });
     });
 
+    // The shadow frustum is fitted around the local player, so it has to be re-centred
+    // before the camera renders.
+    this.environment?.focus(localPosition);
+
     // Camera follows the smoothed local position.
     this.cameraRig?.update(
       {
@@ -562,7 +567,10 @@ export class GameApp {
     const existing = this.avatars.get(playerId);
     if (existing) return existing;
 
-    const avatar = new Avatar(this.scene!, playerId, { isLocal });
+    const avatar = new Avatar(this.scene!, playerId, {
+      isLocal,
+      environment: this.environment ?? undefined,
+    });
     this.avatars.set(playerId, avatar);
     return avatar;
   }
@@ -994,7 +1002,7 @@ export class GameApp {
     this.audio.dispose();
     this.effects?.dispose();
     this.scenery?.dispose();
-    this.lighting?.dispose();
+    this.environment?.dispose();
     this.cameraRig?.dispose();
 
     this.hud.dispose();
