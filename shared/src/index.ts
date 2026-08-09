@@ -1,4 +1,5 @@
 export * from './constants.js';
+export * from './net.js';
 export * from './math.js';
 export * from './rng.js';
 export * from './binary.js';

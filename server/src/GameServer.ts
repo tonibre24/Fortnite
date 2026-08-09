@@ -1,3 +1,9 @@
+import {
+  createServer,
+  type IncomingMessage,
+  type Server as HttpServer,
+  type ServerResponse,
+} from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
 import {
   CONNECTION_TIMEOUT_MS,
@@ -6,6 +12,7 @@ import {
   MsgType,
   PROTOCOL_VERSION,
   TICK_MS,
+  WS_PATH,
   KickReason,
   decodeClientMessage,
   encodeKick,
@@ -13,6 +20,7 @@ import {
   encodeWelcome,
 } from '@br/shared';
 import { Connection, ConnState } from './Connection.js';
+import { StaticFiles } from './StaticFiles.js';
 import { TickLoop } from './TickLoop.js';
 import { World } from './World.js';
 
@@ -22,6 +30,12 @@ export interface GameServerOptions {
   /** >1 runs the tick loop faster than real time; the simulation dt is unchanged. */
   timeScale?: number;
   log?: (message: string) => void;
+  /**
+   * Directory of built client files to serve alongside the WebSocket. Omitted in
+   * dev, where Vite serves the client and proxies the socket here, and in the
+   * sim, which has no browser at all.
+   */
+  clientDir?: string;
 }
 
 export interface ServerError {
@@ -38,7 +52,9 @@ export class GameServer {
 
   private readonly log: (message: string) => void;
   private readonly requestedPort: number;
+  private readonly staticFiles: StaticFiles | null;
   private wss: WebSocketServer | null = null;
+  private http: HttpServer | null = null;
   private readonly loop: TickLoop;
   private readonly connections = new Set<Connection>();
   private readonly byPlayerId = new Map<number, Connection>();
@@ -52,9 +68,14 @@ export class GameServer {
     this.seed = (options.seed ?? 0x5eed1234) >>> 0;
     this.timeScale = options.timeScale ?? 1;
     this.log = options.log ?? ((m) => console.log(m));
+    this.staticFiles = options.clientDir === undefined ? null : new StaticFiles(options.clientDir);
 
     this.world = new World(this.seed);
-    for (let id = MAX_PLAYERS; id >= 1; id--) this.freeIds.push(id);
+    // Taken from the front and returned to the back, so an id is only reused
+    // once every other id has been. Handing a departing player's id straight to
+    // the next joiner would let a remote's interpolation buffer blend the two
+    // into one body sliding across the map.
+    for (let id = 1; id <= MAX_PLAYERS; id++) this.freeIds.push(id);
 
     this.loop = new TickLoop(
       TICK_MS / this.timeScale,
@@ -90,24 +111,51 @@ export class GameServer {
     for (const player of this.world.players.values()) player.droppedCommands = 0;
   }
 
-  /** Starts listening. Resolves with the actually bound port (0 => ephemeral). */
+  /**
+   * Starts listening. Resolves with the actually bound port (0 => ephemeral).
+   *
+   * The WebSocket rides on the same HTTP server as the static files, on its own
+   * path, so a deployment is one port and one origin - the shape a tunnel or any
+   * reverse proxy wants.
+   */
   start(): Promise<number> {
     return new Promise((resolve, reject) => {
-      const wss = new WebSocketServer({ port: this.requestedPort });
+      const http = createServer((req, res) => {
+        void this.onRequest(req, res);
+      });
+      this.http = http;
+
+      const wss = new WebSocketServer({ server: http, path: WS_PATH });
       this.wss = wss;
       wss.on('connection', (socket) => this.onConnection(socket));
-      wss.on('error', (err) => {
+      wss.on('error', (err) => this.recordError(err));
+
+      http.on('error', (err) => {
         this.recordError(err);
         reject(err);
       });
-      wss.on('listening', () => {
-        const address = wss.address();
+      http.listen(this.requestedPort, () => {
+        const address = http.address();
         const port = typeof address === 'object' && address !== null ? address.port : this.requestedPort;
         this.loop.start();
-        this.log(`server listening on ws://localhost:${port} (seed ${this.seed}, ${this.timeScale}x)`);
+        const what = this.staticFiles === null ? `${WS_PATH} only` : `game + ${WS_PATH}`;
+        this.log(`server listening on http://localhost:${port} (${what}, seed ${this.seed}, ${this.timeScale}x)`);
         resolve(port);
       });
     });
+  }
+
+  private async onRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    try {
+      if (this.staticFiles !== null && (await this.staticFiles.handle(req, res))) return;
+    } catch (err) {
+      this.recordError(err);
+      if (!res.headersSent) res.writeHead(500);
+      res.end();
+      return;
+    }
+    res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
+    res.end('not found\n');
   }
 
   async stop(): Promise<void> {
@@ -115,10 +163,15 @@ export class GameServer {
     for (const conn of [...this.connections]) conn.close();
     this.connections.clear();
     this.byPlayerId.clear();
+
     const wss = this.wss;
-    if (!wss) return;
+    const http = this.http;
     this.wss = null;
-    await new Promise<void>((resolve) => wss.close(() => resolve()));
+    this.http = null;
+    if (wss) await new Promise<void>((resolve) => wss.close(() => resolve()));
+    // Closing the ws server leaves the HTTP server listening, so it has to be
+    // shut down explicitly or the port stays held.
+    if (http) await new Promise<void>((resolve) => http.close(() => resolve()));
   }
 
   private recordError(err: unknown): void {
@@ -160,7 +213,7 @@ export class GameServer {
           this.kick(conn, KickReason.BadProtocol);
           return;
         }
-        const id = this.freeIds.pop();
+        const id = this.freeIds.shift();
         if (id === undefined) {
           this.kick(conn, KickReason.ServerFull);
           return;
@@ -196,12 +249,23 @@ export class GameServer {
     this.dropConnection(conn);
   }
 
+  /**
+   * Removes a player the moment their socket goes away, mid-round or not.
+   *
+   * Taking them straight out of the world is what keeps the round honest: the
+   * next snapshot carries their id in its removal list so every client drops
+   * them, the alive count falls, and a round that is down to its last player
+   * ends on the very next tick instead of waiting on someone who is never
+   * coming back.
+   */
   private dropConnection(conn: Connection): void {
     if (!this.connections.delete(conn)) return;
-    if (conn.playerId !== 0) {
-      this.byPlayerId.delete(conn.playerId);
-      this.world.removePlayer(conn.playerId);
-      this.freeIds.push(conn.playerId);
+    const id = conn.playerId;
+    if (id !== 0) {
+      conn.playerId = 0;
+      this.byPlayerId.delete(id);
+      this.world.removePlayer(id);
+      this.freeIds.push(id);
       this.log(`- ${conn.name} left (${this.byPlayerId.size} online)`);
     }
     conn.close();
@@ -218,7 +282,9 @@ export class GameServer {
 
     this.world.step();
 
-    for (const conn of this.byPlayerId.values()) {
+    // Copied, because a send that fails drops the connection and mutates the
+    // map we would otherwise be iterating.
+    for (const conn of [...this.byPlayerId.values()]) {
       const player = this.world.players.get(conn.playerId);
       if (player === undefined) continue;
       conn.send(this.world.snapshotFor(player));

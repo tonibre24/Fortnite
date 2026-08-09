@@ -1,7 +1,6 @@
 import './style.css';
 import {
   BUS_SIZE_Y,
-  DEFAULT_PORT,
   EventType,
   ItemKind,
   LOBBY_COUNTDOWN_TICKS,
@@ -16,6 +15,7 @@ import {
   TICK_RATE,
   isConsumableKind,
   itemLabel,
+  resolveServerUrl,
   dequantizePitch,
   dequantizeYaw,
   unpackWeapon,
@@ -35,12 +35,15 @@ import { WorldView } from './render/WorldView.js';
 import { Hud } from './ui/Hud.js';
 import { Minimap } from './ui/Minimap.js';
 
-function resolveServerUrl(): string {
+/**
+ * Same origin as the page, always. `?server=` stays as an explicit escape hatch
+ * for pointing a local client at someone else's server, but nothing here knows
+ * a hostname, a port or a scheme, so the page works unchanged on localhost, on
+ * a LAN address and behind an https tunnel.
+ */
+function serverUrl(): string {
   const override = new URLSearchParams(window.location.search).get('server');
-  if (override !== null) return override;
-  const envUrl = import.meta.env.VITE_SERVER_URL as string | undefined;
-  if (envUrl) return envUrl;
-  return `ws://${window.location.hostname || 'localhost'}:${DEFAULT_PORT}`;
+  return override ?? resolveServerUrl(window.location);
 }
 
 const canvas = document.getElementById('viewport');
@@ -56,7 +59,7 @@ const roundView = new RoundView(renderer.scene);
 const minimap = new Minimap();
 
 const client = new GameClient({
-  url: resolveServerUrl(),
+  url: serverUrl(),
   name: `player-${Math.floor(Math.random() * 1000)}`,
   input,
   onStatus: (status, detail) => hud.setStatus(status, detail),

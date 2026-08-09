@@ -13,7 +13,8 @@
   },
   "scripts": {
     "dev": "concurrently -n server,client -c magenta,cyan \"npm run dev -w server\" \"npm run dev -w client\"",
-    "build": "npm run build -w client",
+    "build": "npm run build -w shared && npm run build -w server && npm run build -w client",
+    "start": "npm start -w server",
     "sim": "tsx tools/sim.ts",
     "check": "npm run typecheck && vitest run",
     "typecheck": "tsc --noEmit -p tsconfig.check.json",

@@ -11,6 +11,7 @@ import {
   RECONCILE_EPSILON,
   ROUND_END_TICKS,
   ROUND_PHASE_NAMES,
+  resolveServerUrl,
   STORM_PHASES,
   TICK_MS,
   stormTotalTicks,
@@ -90,7 +91,8 @@ async function main(): Promise<void> {
     log,
   });
   const port = await server.start();
-  const url = `ws://127.0.0.1:${port}`;
+  // Built with the same resolver the browser uses, so the harness exercises it.
+  const url = resolveServerUrl({ protocol: 'http:', host: `127.0.0.1:${port}` });
 
   const clients: SimClient[] = [];
   for (let i = 0; i < opts.clients; i++) {
