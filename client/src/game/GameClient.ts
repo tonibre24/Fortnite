@@ -9,6 +9,8 @@ import {
   generateMap,
   hashMap,
   peekSnapshotTick,
+  StateFlag,
+  type GameEvent,
   type GameMap,
   type InputCommand,
   type PlayerState,
@@ -17,6 +19,10 @@ import {
 import { Connection, type ConnectionStatus, type SocketLike } from '../net/Connection.js';
 import { Predictor } from './Predictor.js';
 import { RemoteInterpolator, type RenderedRemote } from './RemoteInterpolator.js';
+
+/** Events are dropped rather than queued forever if nothing drains them. */
+const MAX_BUFFERED_EVENTS = 256;
+const EMPTY_EVENTS: GameEvent[] = [];
 
 /** What the local player is doing this tick. Produced by keyboard/mouse or by a bot. */
 export interface InputSample {
@@ -62,6 +68,11 @@ export class GameClient {
   snapshotsDropped = 0;
   /** Packets discarded for being older than one already applied. */
   snapshotsStale = 0;
+  /**
+   * Events from the latest snapshots, drained by whoever is presenting them.
+   * Kept bounded so a host that never drains cannot grow this without limit.
+   */
+  readonly events: GameEvent[] = [];
 
   private readonly interpolator: RemoteInterpolator;
   private readonly input: InputSource;
@@ -104,6 +115,21 @@ export class GameClient {
 
   get ready(): boolean {
     return this.map !== null && this.predictor.initialized;
+  }
+
+  get alive(): boolean {
+    return (this.predictor.state.flags & StateFlag.Alive) !== 0;
+  }
+
+  /** Everyone the server still lists, including the local player. */
+  get playerCount(): number {
+    return this.remotes.size + (this.ready ? 1 : 0);
+  }
+
+  /** Removes and returns everything queued since the last call. */
+  drainEvents(): GameEvent[] {
+    if (this.events.length === 0) return EMPTY_EVENTS;
+    return this.events.splice(0, this.events.length);
   }
 
   connect(): void {
@@ -151,6 +177,9 @@ export class GameClient {
     this.snapshots.set(decoded.tick, decoded.players);
     this.trimSnapshots(decoded.tick);
     this.ackTick = decoded.tick;
+
+    for (const event of decoded.events) this.events.push(event);
+    while (this.events.length > MAX_BUFFERED_EVENTS) this.events.shift();
 
     const self = decoded.players.get(this.connection.playerId);
     if (self !== undefined) {
@@ -209,6 +238,9 @@ export class GameClient {
       buttons: sample.buttons,
       yawQ: sample.yawQ,
       pitchQ: sample.pitchQ,
+      // What this client is currently drawing other players at. The server
+      // rewinds to it so a shot is judged against what the shooter saw.
+      renderTick: this.interpolator.renderTick,
     };
 
     this.predictor.applyCommand(cmd, map.world);

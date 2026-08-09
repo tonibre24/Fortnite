@@ -26,6 +26,7 @@ function randomCommand(rng: Rng, seq: number): InputCommand {
     buttons,
     yawQ: quantizeYaw(rng.range(-Math.PI, Math.PI)),
     pitchQ: quantizePitch(rng.range(-1, 1)),
+    renderTick: 0,
   };
 }
 
@@ -125,6 +126,7 @@ describe('prediction and reconciliation', () => {
       buttons: Button.Forward | Button.Sprint,
       yawQ: quantizeYaw(0),
       pitchQ: quantizePitch(0),
+      renderTick: 0,
     });
 
     for (let tick = 1; tick <= 30; tick++) {
@@ -151,7 +153,7 @@ describe('prediction and reconciliation', () => {
     predictor.reset(player.state);
 
     for (let tick = 1; tick <= 100; tick++) {
-      const cmd: InputCommand = { seq: tick, buttons: Button.Forward, yawQ: 0, pitchQ: 0 };
+      const cmd: InputCommand = { seq: tick, buttons: Button.Forward, yawQ: 0, pitchQ: 0, renderTick: 0 };
       predictor.applyCommand(cmd, world.map.world);
       player.enqueue([cmd]);
       world.step();
@@ -175,11 +177,12 @@ describe('server input handling', () => {
       buttons: Button.Forward,
       yawQ: 0,
       pitchQ: 0,
+      renderTick: 0,
     }));
 
     player.enqueue(commands);
     player.enqueue(commands);
-    player.enqueue([...commands, { seq: 4, buttons: 0, yawQ: 0, pitchQ: 0 }]);
+    player.enqueue([...commands, { seq: 4, buttons: 0, yawQ: 0, pitchQ: 0, renderTick: 0 }]);
 
     expect(player.queue.map((c) => c.seq)).toEqual([1, 2, 3, 4]);
   });
@@ -189,7 +192,7 @@ describe('server input handling', () => {
     const player = world.addPlayer(1, 'test');
     const flood: InputCommand[] = [];
     for (let seq = 1; seq <= 30; seq++) {
-      flood.push({ seq, buttons: Button.Forward | Button.Sprint, yawQ: 0, pitchQ: 0 });
+      flood.push({ seq, buttons: Button.Forward | Button.Sprint, yawQ: 0, pitchQ: 0, renderTick: 0 });
     }
     player.enqueue(flood);
 
@@ -203,7 +206,7 @@ describe('server input handling', () => {
   it('holds a starved player still rather than guessing at their input', () => {
     const world = new World(SEED);
     const player = world.addPlayer(1, 'test');
-    player.enqueue([{ seq: 1, buttons: Button.Forward, yawQ: 0, pitchQ: 0 }]);
+    player.enqueue([{ seq: 1, buttons: Button.Forward, yawQ: 0, pitchQ: 0, renderTick: 0 }]);
     world.step();
 
     const settled = { ...player.state.pos };
@@ -219,7 +222,7 @@ describe('server input handling', () => {
     const world = new World(SEED);
     const player = world.addPlayer(1, 'test');
     player.state.pos.y = 30;
-    player.enqueue([{ seq: 1, buttons: 0, yawQ: 0, pitchQ: 0 }]);
+    player.enqueue([{ seq: 1, buttons: 0, yawQ: 0, pitchQ: 0, renderTick: 0 }]);
 
     for (let i = 0; i < 60; i++) world.step();
 

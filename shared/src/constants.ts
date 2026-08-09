@@ -203,6 +203,35 @@ export const COLOR_SELF = 0x3f7fd0;
 export const COLOR_ENEMY = 0xd03030;
 export const COLOR_STORM = 0x8a3fd0;
 
+// ------------------------------------------------------------------ combat
+
+/** Hitscan range. Beyond this a shot simply misses. */
+export const WEAPON_MAX_RANGE = 260;
+/** Top slice of the player box that counts as a head. */
+export const HEAD_HEIGHT = 0.4;
+export const HEADSHOT_MULTIPLIER = 2;
+
+/**
+ * How far back the server will rewind to honour a client's reported view.
+ * Anything older is a client claiming to have seen the distant past.
+ */
+export const MAX_LAG_COMP_TICKS = 20;
+/** Fixed-point scale for the render tick a client reports with each command. */
+export const RENDER_TICK_SCALE = 16;
+
+/** Ticks a shot's tracer stays on screen. */
+export const TRACER_LIFETIME_MS = 90;
+/** Ticks a hit marker stays on screen. */
+export const HIT_MARKER_MS = 180;
+/** Entries kept in the kill feed, and how long each survives. */
+export const KILL_FEED_MAX = 5;
+export const KILL_FEED_MS = 6000;
+
+/** Damage indicator arc lifetime. */
+export const DAMAGE_FLASH_MS = 400;
+
 // ------------------------------------------------------------------ gameplay
 
 export const MAX_PLAYERS = 20;
+/** Delay before a downed player's camera detaches into free spectate. */
+export const SPECTATE_HANDOFF_TICKS = 20;

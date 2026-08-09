@@ -93,12 +93,14 @@ async function main(): Promise<void> {
   await sleep((opts.seconds * 1000) / opts.timeScale);
 
   const liveError = measureLiveError(server, clients);
+  // Sampled before teardown: closing a client removes its player from the world.
+  const survivors = server.world.aliveCount;
 
   for (const client of clients) client.stop();
   await sleep(50);
   await server.stop();
 
-  printReport(server, clients, opts, liveError);
+  printReport(server, clients, opts, liveError, survivors);
 }
 
 /**
@@ -123,6 +125,7 @@ function printReport(
   clients: SimClient[],
   opts: SimOptions,
   liveError: number[],
+  survivors: number,
 ): void {
   const stats = server.tickStats;
   const connected = clients.filter((c) => c.playerId !== 0);
@@ -165,6 +168,15 @@ function printReport(
   console.log(`  exceptions       ${clientErrors.length}`);
   console.log('');
 
+  const shots = sum(connected.map((c) => c.shotsFired));
+  const hits = sum(connected.map((c) => c.hitsLanded));
+  console.log('combat');
+  console.log(`  shots fired      ${shots}`);
+  console.log(`  hits landed      ${hits} (${percent(hits, shots)} of shots)`);
+  console.log(`  eliminations     ${server.world.killCount}`);
+  console.log(`  still alive      ${survivors}/${connected.length}`);
+  console.log('');
+
   console.log('desync (client prediction vs server authority)');
   console.log(`  reconciliations  ${reconciles}`);
   console.log(`  corrections      ${corrections} (${percent(corrections, reconciles)})`);
@@ -200,6 +212,8 @@ function printReport(
   if (mapMismatches > 0) problems.push(`${mapMismatches} clients generated a different map`);
   if (undecodable > 0) problems.push(`${undecodable} snapshots could not be decoded`);
   if (reconciles === 0) problems.push('no reconciliations happened — clients never received state');
+  if (shots === 0) problems.push('nobody fired a shot — combat never engaged');
+  if (hits === 0) problems.push('no shot ever connected — hit detection or lag compensation is broken');
   // With no packet loss the prediction must reproduce the server exactly, so
   // any correction at all means the two simulations diverged.
   if (droppedCommands > 0) problems.push(`${droppedCommands} input commands dropped by the server`);

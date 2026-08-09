@@ -1,6 +1,7 @@
+import { PLAYER_MAX_HEALTH } from './constants.js';
 import type { Vec3 } from './math.js';
 
-/** Bitfield of held actions, packed into one byte of every input command. */
+/** Bitfield of held actions, packed into two bytes of every input command. */
 export const Button = {
   Forward: 1 << 0,
   Back: 1 << 1,
@@ -10,6 +11,7 @@ export const Button = {
   Sprint: 1 << 5,
   Crouch: 1 << 6,
   Fire: 1 << 7,
+  Reload: 1 << 8,
 } as const;
 
 export type ButtonName = keyof typeof Button;
@@ -24,6 +26,13 @@ export interface InputCommand {
   buttons: number;
   yawQ: number;
   pitchQ: number;
+  /**
+   * The moment, in fractional server ticks, that the client was rendering other
+   * players at when it pressed fire. The server rewinds to it so a shot is
+   * judged against what the shooter actually saw. Only carried on commands that
+   * fire; zero otherwise.
+   */
+  renderTick: number;
 }
 
 /** Flags packed into the replicated player flag byte. */
@@ -50,6 +59,13 @@ export interface PlayerState {
   shield: number;
   /** Ticks since the player was last grounded, saturating at 255 (coyote time). */
   sinceGrounded: number;
+  /** Equipped weapon, packed class + rarity. Zero means empty handed. */
+  weapon: number;
+  /** Rounds left in the magazine. */
+  ammo: number;
+  /** Ticks left on a reload, zero when not reloading. */
+  reload: number;
+  kills: number;
 }
 
 export function createPlayerState(id: number): PlayerState {
@@ -60,9 +76,13 @@ export function createPlayerState(id: number): PlayerState {
     yawQ: 0,
     pitchQ: 0,
     flags: StateFlag.Alive,
-    health: 100,
+    health: PLAYER_MAX_HEALTH,
     shield: 0,
     sinceGrounded: 0,
+    weapon: 0,
+    ammo: 0,
+    reload: 0,
+    kills: 0,
   };
 }
 
@@ -80,6 +100,10 @@ export function copyPlayerState(out: PlayerState, src: PlayerState): PlayerState
   out.health = src.health;
   out.shield = src.shield;
   out.sinceGrounded = src.sinceGrounded;
+  out.weapon = src.weapon;
+  out.ammo = src.ammo;
+  out.reload = src.reload;
+  out.kills = src.kills;
   return out;
 }
 

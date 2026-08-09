@@ -19,6 +19,7 @@ export interface RenderedRemote {
   health: number;
   shield: number;
   onGround: boolean;
+  alive: boolean;
 }
 
 interface BufferedSnapshot {
@@ -50,6 +51,13 @@ export class RemoteInterpolator {
     return this.buffer.length;
   }
 
+  /**
+   * The server tick this client is currently drawing other players at, in
+   * fractional ticks. Reported with every shot so the server can rewind to the
+   * exact moment the shooter was looking at.
+   */
+  renderTick = 0;
+
   add(tick: number, players: Map<number, PlayerState>, recvTime: number): void {
     // Snapshots arrive in order over a stream transport; ignore anything stale.
     const newest = this.buffer[this.buffer.length - 1];
@@ -78,6 +86,7 @@ export class RemoteInterpolator {
     if (this.buffer.length === 0) return;
 
     const renderTick = (now - this.offset - this.delayMs) / this.tickMs;
+    this.renderTick = renderTick;
 
     const oldest = this.buffer[0]!;
     if (renderTick <= oldest.tick) {
@@ -140,6 +149,7 @@ export class RemoteInterpolator {
         health: next.health,
         shield: next.shield,
         onGround: (next.flags & StateFlag.OnGround) !== 0,
+        alive: (next.flags & StateFlag.Alive) !== 0,
       });
     }
   }
@@ -156,5 +166,6 @@ function toRendered(state: PlayerState): RenderedRemote {
     health: state.health,
     shield: state.shield,
     onGround: (state.flags & StateFlag.OnGround) !== 0,
+    alive: (state.flags & StateFlag.Alive) !== 0,
   };
 }

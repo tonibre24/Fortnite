@@ -20,35 +20,292 @@ body {
   height: 100%;
 }
 
-#hud {
-  position: fixed;
-  top: 12px;
-  left: 12px;
+#hud,
+#hud * {
   pointer-events: none;
   user-select: none;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+}
+
+#hud {
+  position: fixed;
+  inset: 0;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85);
 }
 
 #status {
+  position: absolute;
+  top: 12px;
+  left: 12px;
   font-size: 15px;
   font-weight: 600;
-  letter-spacing: 0.02em;
 }
 
 #status.connected {
   color: #6ee7a0;
 }
-
 #status.connecting {
   color: #e8c46e;
 }
-
 #status.disconnected {
   color: #ef6f6f;
 }
 
 #stats {
-  margin-top: 6px;
-  opacity: 0.82;
+  position: absolute;
+  top: 34px;
+  left: 12px;
+  opacity: 0.8;
   white-space: pre;
+  font-size: 12px;
+}
+
+/* ------------------------------------------------------------- crosshair */
+
+#crosshair {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 26px;
+  height: 26px;
+  margin: -13px 0 0 -13px;
+}
+
+#crosshair span {
+  position: absolute;
+  background: #f2f5f8;
+  box-shadow: 0 0 2px rgba(0, 0, 0, 0.9);
+}
+
+#crosshair span:nth-child(1),
+#crosshair span:nth-child(2) {
+  width: 2px;
+  height: 8px;
+  left: 12px;
+}
+#crosshair span:nth-child(1) {
+  top: 0;
+}
+#crosshair span:nth-child(2) {
+  bottom: 0;
+}
+#crosshair span:nth-child(3),
+#crosshair span:nth-child(4) {
+  height: 2px;
+  width: 8px;
+  top: 12px;
+}
+#crosshair span:nth-child(3) {
+  left: 0;
+}
+#crosshair span:nth-child(4) {
+  right: 0;
+}
+
+#crosshair.hidden {
+  display: none;
+}
+
+/* ------------------------------------------------------------ hit marker */
+
+#hitmarker {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 22px;
+  height: 22px;
+  margin: -11px 0 0 -11px;
+  opacity: 0;
+}
+
+#hitmarker span {
+  position: absolute;
+  width: 9px;
+  height: 2px;
+  background: #ffffff;
+  left: 7px;
+  top: 10px;
+}
+#hitmarker span:nth-child(1) {
+  transform: rotate(45deg) translate(-7px, 0);
+}
+#hitmarker span:nth-child(2) {
+  transform: rotate(-45deg) translate(-7px, 0);
+}
+#hitmarker span:nth-child(3) {
+  transform: rotate(45deg) translate(7px, 0);
+}
+#hitmarker span:nth-child(4) {
+  transform: rotate(-45deg) translate(7px, 0);
+}
+
+#hitmarker.show {
+  opacity: 1;
+}
+#hitmarker.kill span {
+  background: #ff6b5a;
+}
+
+/* ---------------------------------------------------------------- vitals */
+
+#vitals {
+  position: absolute;
+  left: 24px;
+  bottom: 24px;
+  width: 260px;
+}
+
+.bar {
+  position: relative;
+  height: 14px;
+  margin-top: 5px;
+  background: rgba(8, 10, 14, 0.62);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.bar > i {
+  display: block;
+  height: 100%;
+  width: 0;
+  transition: width 90ms linear;
+}
+
+.bar > b {
+  position: absolute;
+  inset: 0;
+  font-weight: 600;
+  font-size: 11px;
+  line-height: 12px;
+  text-align: center;
+  font-style: normal;
+}
+
+#health > i {
+  background: #57c66a;
+}
+#shield > i {
+  background: #4aa3f0;
+}
+
+/* --------------------------------------------------------------- weapon */
+
+#weapon {
+  position: absolute;
+  right: 24px;
+  bottom: 24px;
+  text-align: right;
+}
+
+#weapon .name {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
+
+#weapon .ammo {
+  font-size: 30px;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+#weapon .ammo.empty {
+  color: #ef6f6f;
+}
+
+#weapon .reloading {
+  font-size: 13px;
+  color: #e8c46e;
+}
+
+/* ------------------------------------------------------------- kill feed */
+
+#killfeed {
+  position: absolute;
+  right: 24px;
+  top: 16px;
+  text-align: right;
+  font-size: 13px;
+}
+
+#killfeed div {
+  margin-bottom: 3px;
+  padding: 2px 7px;
+  background: rgba(8, 10, 14, 0.55);
+  border-radius: 2px;
+  display: inline-block;
+}
+
+#killfeed .you {
+  color: #e8c46e;
+  font-weight: 600;
+}
+
+/* -------------------------------------------------------- damage overlay */
+
+#damage {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  background: radial-gradient(ellipse at center, rgba(190, 30, 30, 0) 45%, rgba(190, 30, 30, 0.55) 100%);
+  transition: opacity 140ms linear;
+}
+
+#damage.show {
+  opacity: 1;
+}
+
+#indicators {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+}
+
+.arc {
+  position: absolute;
+  width: 6px;
+  height: 44px;
+  margin-left: -3px;
+  background: linear-gradient(to bottom, rgba(255, 90, 70, 0.95), rgba(255, 90, 70, 0));
+  transform-origin: 50% 120px;
+}
+
+/* -------------------------------------------------------------- banners */
+
+#banner {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 38%;
+  text-align: center;
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  display: none;
+}
+
+#banner.show {
+  display: block;
+}
+
+#banner .sub {
+  display: block;
+  margin-top: 8px;
+  font-size: 14px;
+  font-weight: 400;
+  opacity: 0.85;
+}
+
+#hint {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 90px;
+  text-align: center;
+  font-size: 13px;
+  opacity: 0.75;
+}
+
+#hint.hidden {
+  display: none;
 }

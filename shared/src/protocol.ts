@@ -1,6 +1,6 @@
 import { BinaryReader, BinaryWriter } from './binary.js';
-import { PROTOCOL_VERSION, TICK_RATE } from './constants.js';
-import { createPlayerState, type InputCommand, type PlayerState } from './types.js';
+import { PROTOCOL_VERSION, RENDER_TICK_SCALE, TICK_RATE } from './constants.js';
+import { Button, createPlayerState, type InputCommand, type PlayerState } from './types.js';
 
 /** Message type tags. Client messages are < 0x80, server messages >= 0x80. */
 export const MsgType = {
@@ -72,15 +72,19 @@ export function encodePing(clientTime: number): ArrayBuffer {
  * retransmission logic.
  */
 export function encodeInput(commands: readonly InputCommand[], ackTick: number): ArrayBuffer {
-  const w = new BinaryWriter(16 + commands.length * 5);
+  const w = new BinaryWriter(16 + commands.length * 10);
   w.u8(MsgType.Input);
   w.u32(ackTick >>> 0);
   w.u32(commands.length === 0 ? 0 : commands[0]!.seq >>> 0);
   w.u8(commands.length);
   for (const cmd of commands) {
-    w.u8(cmd.buttons);
+    w.u16(cmd.buttons);
     w.u16(cmd.yawQ);
     w.i16(cmd.pitchQ);
+    // The rewind time only matters for a shot, so only a shot pays for it.
+    if ((cmd.buttons & Button.Fire) !== 0) {
+      w.u32(Math.max(0, Math.round(cmd.renderTick * RENDER_TICK_SCALE)));
+    }
   }
   return w.finish();
 }
@@ -168,10 +172,18 @@ export const Field = {
   Health: 1 << 9,
   Shield: 1 << 10,
   SinceGrounded: 1 << 11,
+  Weapon: 1 << 12,
+  Ammo: 1 << 13,
+  Reload: 1 << 14,
+  Kills: 1 << 15,
 } as const;
 
-/** Velocity is only replicated to a player's own client, which needs it to predict. */
-const SELF_ONLY_FIELDS = Field.VelX | Field.VelY | Field.VelZ;
+/**
+ * Fields only replicated to the player they belong to. Everyone needs to know
+ * which gun you are holding; nobody else needs your magazine count, and your
+ * velocity is only useful to the client predicting you.
+ */
+const SELF_ONLY_FIELDS = Field.VelX | Field.VelY | Field.VelZ | Field.Ammo | Field.Reload;
 
 const SNAPSHOT_FLAG_DELTA = 1 << 0;
 
@@ -180,10 +192,136 @@ export interface SnapshotBaseline {
   players: ReadonlyMap<number, PlayerState>;
 }
 
+/**
+ * One-shot notifications for things that happen at an instant rather than
+ * having a state: a shot going off, a hit landing, someone dying. They ride
+ * along with the snapshot because it is already a per-client packet, so each
+ * client can be told only what it should know - hit markers go to the shooter,
+ * damage direction to the victim, kills to everyone.
+ */
+export const EventType = {
+  Shot: 1,
+  Hit: 2,
+  Kill: 3,
+  Damaged: 4,
+} as const;
+
+export interface ShotEvent {
+  type: typeof EventType.Shot;
+  shooterId: number;
+  seq: number;
+  weapon: number;
+  x: number;
+  y: number;
+  z: number;
+  yawQ: number;
+  pitchQ: number;
+}
+
+export interface HitEvent {
+  type: typeof EventType.Hit;
+  victimId: number;
+  damage: number;
+  headshot: boolean;
+  killed: boolean;
+}
+
+export interface KillEvent {
+  type: typeof EventType.Kill;
+  killerId: number;
+  victimId: number;
+  weapon: number;
+}
+
+export interface DamagedEvent {
+  type: typeof EventType.Damaged;
+  attackerId: number;
+  damage: number;
+  dirX: number;
+  dirZ: number;
+}
+
+export type GameEvent = ShotEvent | HitEvent | KillEvent | DamagedEvent;
+
+export function writeEvent(w: BinaryWriter, event: GameEvent): void {
+  w.u8(event.type);
+  switch (event.type) {
+    case EventType.Shot:
+      w.u16(event.shooterId);
+      w.u32(event.seq >>> 0);
+      w.u8(event.weapon);
+      w.f32(event.x);
+      w.f32(event.y);
+      w.f32(event.z);
+      w.u16(event.yawQ);
+      w.i16(event.pitchQ);
+      break;
+    case EventType.Hit:
+      w.u16(event.victimId);
+      w.u16(event.damage);
+      w.u8((event.headshot ? 1 : 0) | (event.killed ? 2 : 0));
+      break;
+    case EventType.Kill:
+      w.u16(event.killerId);
+      w.u16(event.victimId);
+      w.u8(event.weapon);
+      break;
+    case EventType.Damaged:
+      w.u16(event.attackerId);
+      w.u16(event.damage);
+      w.f32(event.dirX);
+      w.f32(event.dirZ);
+      break;
+  }
+}
+
+export function readEvent(r: BinaryReader): GameEvent | null {
+  const type = r.u8();
+  switch (type) {
+    case EventType.Shot:
+      return {
+        type: EventType.Shot,
+        shooterId: r.u16(),
+        seq: r.u32(),
+        weapon: r.u8(),
+        x: r.f32(),
+        y: r.f32(),
+        z: r.f32(),
+        yawQ: r.u16(),
+        pitchQ: r.i16(),
+      };
+    case EventType.Hit: {
+      const victimId = r.u16();
+      const damage = r.u16();
+      const flags = r.u8();
+      return {
+        type: EventType.Hit,
+        victimId,
+        damage,
+        headshot: (flags & 1) !== 0,
+        killed: (flags & 2) !== 0,
+      };
+    }
+    case EventType.Kill:
+      return { type: EventType.Kill, killerId: r.u16(), victimId: r.u16(), weapon: r.u8() };
+    case EventType.Damaged:
+      return {
+        type: EventType.Damaged,
+        attackerId: r.u16(),
+        damage: r.u16(),
+        dirX: r.f32(),
+        dirZ: r.f32(),
+      };
+    default:
+      return null;
+  }
+}
+
 export interface DecodedSnapshot {
   tick: number;
   lastProcessedSeq: number;
   players: Map<number, PlayerState>;
+  events: GameEvent[];
 }
 
 /**
@@ -197,6 +335,7 @@ export function encodeSnapshot(
   baseline: SnapshotBaseline | null,
   selfId: number,
   lastProcessedSeq: number,
+  events: readonly GameEvent[] = [],
 ): ArrayBuffer {
   const w = new BinaryWriter(64 + players.size * 40);
   w.u8(MsgType.Snapshot);
@@ -229,7 +368,7 @@ export function encodeSnapshot(
   w.u16(changed.length);
   for (const { id, state, mask } of changed) {
     w.u16(id);
-    w.u16(mask);
+    w.u32(mask);
     if ((mask & Field.PosX) !== 0) w.f32(state.pos.x);
     if ((mask & Field.PosY) !== 0) w.f32(state.pos.y);
     if ((mask & Field.PosZ) !== 0) w.f32(state.pos.z);
@@ -242,7 +381,17 @@ export function encodeSnapshot(
     if ((mask & Field.Health) !== 0) w.u8(state.health);
     if ((mask & Field.Shield) !== 0) w.u8(state.shield);
     if ((mask & Field.SinceGrounded) !== 0) w.u8(state.sinceGrounded);
+    if ((mask & Field.Weapon) !== 0) w.u8(state.weapon);
+    if ((mask & Field.Ammo) !== 0) w.u8(state.ammo);
+    if ((mask & Field.Reload) !== 0) w.u8(state.reload);
+    if ((mask & Field.Kills) !== 0) w.u8(state.kills);
   }
+
+  // Events are never delta-compressed: they describe an instant, not a state,
+  // so a lost snapshot simply loses them.
+  const capped = events.length > 255 ? events.slice(0, 255) : events;
+  w.u8(capped.length);
+  for (const event of capped) writeEvent(w, event);
 
   return w.finish();
 }
@@ -260,7 +409,11 @@ function fullMask(isSelf: boolean): number {
     Field.Flags |
     Field.Health |
     Field.Shield |
-    Field.SinceGrounded;
+    Field.SinceGrounded |
+    Field.Weapon |
+    Field.Ammo |
+    Field.Reload |
+    Field.Kills;
   return isSelf ? all : all & ~SELF_ONLY_FIELDS;
 }
 
@@ -280,6 +433,12 @@ function diffMask(next: PlayerState, prev: PlayerState, isSelf: boolean): number
   if (next.health !== prev.health) mask |= Field.Health;
   if (next.shield !== prev.shield) mask |= Field.Shield;
   if (next.sinceGrounded !== prev.sinceGrounded) mask |= Field.SinceGrounded;
+  if (next.weapon !== prev.weapon) mask |= Field.Weapon;
+  if (isSelf) {
+    if (next.ammo !== prev.ammo) mask |= Field.Ammo;
+    if (next.reload !== prev.reload) mask |= Field.Reload;
+  }
+  if (next.kills !== prev.kills) mask |= Field.Kills;
   return mask;
 }
 
@@ -334,7 +493,7 @@ export function decodeSnapshot(
     const count = r.u16();
     for (let i = 0; i < count; i++) {
       const id = r.u16();
-      const mask = r.u16();
+      const mask = r.u32();
       const prev = players.get(id);
       const state = prev === undefined ? createPlayerState(id) : prev;
 
@@ -350,11 +509,23 @@ export function decodeSnapshot(
       if ((mask & Field.Health) !== 0) state.health = r.u8();
       if ((mask & Field.Shield) !== 0) state.shield = r.u8();
       if ((mask & Field.SinceGrounded) !== 0) state.sinceGrounded = r.u8();
+      if ((mask & Field.Weapon) !== 0) state.weapon = r.u8();
+      if ((mask & Field.Ammo) !== 0) state.ammo = r.u8();
+      if ((mask & Field.Reload) !== 0) state.reload = r.u8();
+      if ((mask & Field.Kills) !== 0) state.kills = r.u8();
 
       players.set(id, state);
     }
 
-    return { tick, lastProcessedSeq, players };
+    const events: GameEvent[] = [];
+    const eventCount = r.u8();
+    for (let i = 0; i < eventCount; i++) {
+      const event = readEvent(r);
+      if (event === null) break;
+      events.push(event);
+    }
+
+    return { tick, lastProcessedSeq, players, events };
   } catch {
     return null;
   }
@@ -374,6 +545,10 @@ function clonePlayer(src: PlayerState, id: number): PlayerState {
   out.health = src.health;
   out.shield = src.shield;
   out.sinceGrounded = src.sinceGrounded;
+  out.weapon = src.weapon;
+  out.ammo = src.ammo;
+  out.reload = src.reload;
+  out.kills = src.kills;
   return out;
 }
 
@@ -395,12 +570,12 @@ export function decodeClientMessage(buffer: ArrayBuffer | Uint8Array): ClientMes
         const count = r.u8();
         const commands: InputCommand[] = [];
         for (let i = 0; i < count; i++) {
-          commands.push({
-            seq: baseSeq + i,
-            buttons: r.u8(),
-            yawQ: r.u16(),
-            pitchQ: r.i16(),
-          });
+          const buttons = r.u16();
+          const yawQ = r.u16();
+          const pitchQ = r.i16();
+          const renderTick =
+            (buttons & Button.Fire) !== 0 ? r.u32() / RENDER_TICK_SCALE : 0;
+          commands.push({ seq: baseSeq + i, buttons, yawQ, pitchQ, renderTick });
         }
         return { type: MsgType.Input, ackTick, commands };
       }

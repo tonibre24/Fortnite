@@ -165,6 +165,99 @@ export function sweepAxis(
   return hit;
 }
 
+/**
+ * Slab test of a ray against one box. Returns the distance along the ray to the
+ * entry point, or -1 when the ray misses (or only hits behind `maxDist`).
+ */
+export function rayBox(
+  ox: number,
+  oy: number,
+  oz: number,
+  invDx: number,
+  invDy: number,
+  invDz: number,
+  box: Box,
+  maxDist: number,
+): number {
+  let tMin = 0;
+  let tMax = maxDist;
+
+  let t1 = (box.minX - ox) * invDx;
+  let t2 = (box.maxX - ox) * invDx;
+  if (t1 > t2) [t1, t2] = [t2, t1];
+  if (t1 > tMin) tMin = t1;
+  if (t2 < tMax) tMax = t2;
+  if (tMin > tMax) return -1;
+
+  t1 = (box.minY - oy) * invDy;
+  t2 = (box.maxY - oy) * invDy;
+  if (t1 > t2) [t1, t2] = [t2, t1];
+  if (t1 > tMin) tMin = t1;
+  if (t2 < tMax) tMax = t2;
+  if (tMin > tMax) return -1;
+
+  t1 = (box.minZ - oz) * invDz;
+  t2 = (box.maxZ - oz) * invDz;
+  if (t1 > t2) [t1, t2] = [t2, t1];
+  if (t1 > tMin) tMin = t1;
+  if (t2 < tMax) tMax = t2;
+  if (tMin > tMax) return -1;
+
+  return tMin;
+}
+
+const rayScratch: number[] = [];
+
+/**
+ * Distance to the first piece of world geometry along a ray, or `maxDist` when
+ * nothing is hit. Walks the broadphase grid cell by cell so a long shot does
+ * not have to consider the whole map.
+ */
+export function raycastWorld(
+  world: CollisionWorld,
+  ox: number,
+  oy: number,
+  oz: number,
+  dx: number,
+  dy: number,
+  dz: number,
+  maxDist: number,
+): number {
+  const invDx = 1 / (dx === 0 ? Number.MIN_VALUE : dx);
+  const invDy = 1 / (dy === 0 ? Number.MIN_VALUE : dy);
+  const invDz = 1 / (dz === 0 ? Number.MIN_VALUE : dz);
+
+  let nearest = maxDist;
+  let travelled = 0;
+  // Step in chunks of one cell, querying the slab of grid the segment covers.
+  // Stopping at the first cell with a hit keeps long rays cheap.
+  while (travelled < nearest) {
+    const step = Math.min(COLLISION_CELL_SIZE, nearest - travelled);
+    const ax = ox + dx * travelled;
+    const ay = oy + dy * travelled;
+    const az = oz + dz * travelled;
+    const bx = ox + dx * (travelled + step);
+    const by = oy + dy * (travelled + step);
+    const bz = oz + dz * (travelled + step);
+
+    world.query(
+      Math.min(ax, bx),
+      Math.min(ay, by),
+      Math.min(az, bz),
+      Math.max(ax, bx),
+      Math.max(ay, by),
+      Math.max(az, bz),
+      rayScratch,
+    );
+    for (let i = 0; i < rayScratch.length; i++) {
+      const t = rayBox(ox, oy, oz, invDx, invDy, invDz, world.boxes[rayScratch[i]!]!, nearest);
+      if (t >= 0 && t < nearest) nearest = t;
+    }
+    travelled += step;
+  }
+  return nearest;
+}
+
 /** True when the player box at `pos` overlaps any solid geometry. */
 export function isBlocked(
   pos: { x: number; y: number; z: number },

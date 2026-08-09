@@ -26,7 +26,7 @@ import {
 const FLAT_GROUND = new CollisionWorld([box(-500, -2, -500, 500, GROUND_Y, 500, 0)]);
 
 function cmd(seq: number, buttons: number, yaw = 0): InputCommand {
-  return { seq, buttons, yawQ: quantizeYaw(yaw), pitchQ: 0 };
+  return { seq, buttons, yawQ: quantizeYaw(yaw), pitchQ: 0, renderTick: 0 };
 }
 
 function spawn(x = 0, y = 0, z = 0): PlayerState {

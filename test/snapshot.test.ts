@@ -70,8 +70,8 @@ describe('snapshot encoding', () => {
     const state = snapshot([player(1, 10), player(2, -20)]);
     const baseline = { tick: 1, players: state };
     const delta = encodeSnapshot(2, state, baseline, 1, 5);
-    // type + tick + flags + baseline + seq + removedCount + playerCount
-    expect(delta.byteLength).toBe(1 + 4 + 1 + 4 + 4 + 1 + 2);
+    // type + tick + flags + baseline + seq + removedCount + playerCount + eventCount
+    expect(delta.byteLength).toBe(1 + 4 + 1 + 4 + 4 + 1 + 2 + 1);
   });
 
   it('removes players that left', () => {
@@ -131,23 +131,23 @@ describe('snapshot encoding', () => {
 describe('input encoding', () => {
   it('round-trips a batch with implied consecutive sequence numbers', () => {
     const commands = [
-      { seq: 100, buttons: 3, yawQ: 1234, pitchQ: -30000 },
-      { seq: 101, buttons: 0, yawQ: 5, pitchQ: 6 },
-      { seq: 102, buttons: 255, yawQ: 65535, pitchQ: 32767 },
+      { seq: 100, buttons: 3, yawQ: 1234, pitchQ: -30000, renderTick: 0 },
+      { seq: 101, buttons: 0, yawQ: 5, pitchQ: 6, renderTick: 0 },
+      { seq: 102, buttons: 511, yawQ: 65535, pitchQ: 32767, renderTick: 0 },
     ];
     const msg = decodeClientMessage(encodeInput(commands, 77));
     expect(msg).toEqual({ type: MsgType.Input, ackTick: 77, commands });
   });
 
   it('costs five bytes per extra command', () => {
-    const one = encodeInput([{ seq: 1, buttons: 0, yawQ: 0, pitchQ: 0 }], 0).byteLength;
+    const one = encodeInput([{ seq: 1, buttons: 0, yawQ: 0, pitchQ: 0, renderTick: 0 }], 0).byteLength;
     const two = encodeInput(
       [
-        { seq: 1, buttons: 0, yawQ: 0, pitchQ: 0 },
-        { seq: 2, buttons: 0, yawQ: 0, pitchQ: 0 },
+        { seq: 1, buttons: 0, yawQ: 0, pitchQ: 0, renderTick: 0 },
+        { seq: 2, buttons: 0, yawQ: 0, pitchQ: 0, renderTick: 0 },
       ],
       0,
     ).byteLength;
-    expect(two - one).toBe(5);
+    expect(two - one).toBe(6);
   });
 });

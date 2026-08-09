@@ -24,6 +24,7 @@ const KEY_BUTTONS: Record<string, number> = {
   ShiftRight: Button.Sprint,
   ControlLeft: Button.Crouch,
   KeyC: Button.Crouch,
+  KeyR: Button.Reload,
 };
 
 /**

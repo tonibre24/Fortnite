@@ -29,6 +29,17 @@ export class ServerPlayer {
   /** Commands discarded because the queue was full - a flooding indicator. */
   droppedCommands = 0;
 
+  /** Ticks left before this player's weapon can fire again. */
+  fireCooldown = 0;
+  /** Whether the trigger was held on the previous command, for semi-automatics. */
+  triggerHeld = false;
+  /** Tick the player died on, or -1 while alive. */
+  diedAtTick = -1;
+  /** Who got the kill, for the spectator camera and the scoreboard. */
+  killedBy = 0;
+  /** Commands simulated this tick, held for the combat pass that follows movement. */
+  readonly resolvedCommands: InputCommand[] = [];
+
   constructor(
     readonly id: number,
     readonly name: string,

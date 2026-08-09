@@ -22,13 +22,17 @@ export class PlayerView {
 
   update(remotes: Map<number, RenderedRemote>): void {
     for (const [id, avatar] of this.avatars) {
-      if (!remotes.has(id)) {
+      const remote = remotes.get(id);
+      // Eliminated players stay in the snapshot so the scoreboard and spectator
+      // camera still know about them, but they leave the world.
+      if (remote === undefined || !remote.alive) {
         this.group.remove(avatar);
         this.avatars.delete(id);
       }
     }
 
     for (const [id, remote] of remotes) {
+      if (!remote.alive) continue;
       let avatar = this.avatars.get(id);
       if (avatar === undefined) {
         avatar = new THREE.Group();

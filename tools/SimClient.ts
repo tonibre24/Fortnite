@@ -1,6 +1,9 @@
 import {
   Button,
+  EventType,
   MAX_PITCH,
+  PLAYER_EYE_HEIGHT,
+  PLAYER_HEIGHT,
   Rng,
   TICK_MS,
   clamp,
@@ -28,6 +31,10 @@ const DECISION_MAX_TICKS = 30;
 const JUMP_CHANCE = 0.08;
 const SPRINT_CHANCE = 0.45;
 const TURN_RATE = 2.5;
+/** How far a bot will engage. */
+const ENGAGE_RANGE = 90;
+/** Radians of aim error, so bots miss like players do. */
+const AIM_ERROR = 0.05;
 
 /**
  * Randomized input that looks enough like a player to exercise every code path:
@@ -39,9 +46,14 @@ class BotInput implements InputSource {
   private pitch = 0;
   private turn = 0;
   private ticksLeft = 0;
+  private client: GameClient | null = null;
 
   constructor(private readonly rng: Rng) {
     this.yaw = rng.range(-Math.PI, Math.PI);
+  }
+
+  attach(client: GameClient): void {
+    this.client = client;
   }
 
   adoptLook(yawQ: number): void {
@@ -52,6 +64,20 @@ class BotInput implements InputSource {
     if (this.ticksLeft <= 0) this.reroll();
     this.ticksLeft -= 1;
 
+    // Engaging beats wandering. Aiming at the interpolated position - what the
+    // bot can actually see - is what puts lag compensation under test: the
+    // server has to rewind to agree that the shot connected.
+    const target = this.nearestTarget();
+    if (target !== null) {
+      this.yaw = target.yaw;
+      this.pitch = target.pitch;
+      return {
+        buttons: (this.buttons & ~Button.Sprint) | Button.Fire,
+        yawQ: quantizeYaw(this.yaw),
+        pitchQ: quantizePitch(this.pitch),
+      };
+    }
+
     this.yaw += this.turn * (TICK_MS / 1000);
     this.pitch = clamp(this.pitch, -MAX_PITCH, MAX_PITCH);
 
@@ -59,6 +85,43 @@ class BotInput implements InputSource {
       buttons: this.buttons,
       yawQ: quantizeYaw(this.yaw),
       pitchQ: quantizePitch(this.pitch),
+    };
+  }
+
+  private nearestTarget(): { yaw: number; pitch: number } | null {
+    const client = this.client;
+    if (client === null || !client.ready || !client.alive) return null;
+
+    const self = client.predictor.state.pos;
+    const eyeY = self.y + PLAYER_EYE_HEIGHT;
+    let bestDistSq = ENGAGE_RANGE * ENGAGE_RANGE;
+    let bestX = 0;
+    let bestY = 0;
+    let bestZ = 0;
+    let found = false;
+
+    for (const remote of client.remotes.values()) {
+      if (!remote.alive) continue;
+      const dx = remote.x - self.x;
+      const dz = remote.z - self.z;
+      const distSq = dx * dx + dz * dz;
+      if (distSq >= bestDistSq) continue;
+      bestDistSq = distSq;
+      bestX = dx;
+      bestY = remote.y + PLAYER_HEIGHT * 0.6 - eyeY;
+      bestZ = dz;
+      found = true;
+    }
+    if (!found) return null;
+
+    const horizontal = Math.hypot(bestX, bestZ) || 1e-6;
+    return {
+      yaw: Math.atan2(-bestX, -bestZ) + this.rng.range(-AIM_ERROR, AIM_ERROR),
+      pitch: clamp(
+        Math.atan2(bestY, horizontal) + this.rng.range(-AIM_ERROR, AIM_ERROR),
+        -MAX_PITCH,
+        MAX_PITCH,
+      ),
     };
   }
 
@@ -96,8 +159,13 @@ export class SimClient {
 
   private timer: ReturnType<typeof setInterval> | null = null;
 
+  shotsFired = 0;
+  hitsLanded = 0;
+  killsDealt = 0;
+
   constructor(private readonly options: SimClientOptions) {
     const rng = new Rng(options.seed);
+    const bot = new BotInput(rng);
     // Latency is quoted in simulated time, so compress it like everything else.
     const wallLatency = options.latencyMs / options.timeScale;
     const wallJitter = options.jitterMs / options.timeScale;
@@ -105,7 +173,7 @@ export class SimClient {
     this.client = new GameClient({
       url: options.url,
       name: options.name,
-      input: new BotInput(rng),
+      input: bot,
       timeScale: options.timeScale,
       createSocket: (url) =>
         new LaggySocket(url, {
@@ -120,6 +188,8 @@ export class SimClient {
         }
       },
     });
+
+    bot.attach(this.client);
 
     this.client.predictor.onCorrection = (before, after, seq, pending) => {
       const d = distance(before.pos, after.pos);
@@ -191,6 +261,9 @@ export class SimClient {
     this.client.snapshotsReceived = 0;
     this.client.snapshotsDropped = 0;
     this.client.snapshotsStale = 0;
+    this.shotsFired = 0;
+    this.hitsLanded = 0;
+    this.killsDealt = 0;
     this.client.connection.bytesIn = 0;
     this.client.connection.packetsIn = 0;
     this.errors.length = 0;
@@ -198,6 +271,21 @@ export class SimClient {
 
   get remoteCount(): number {
     return this.client.remotes.size;
+  }
+
+  get alive(): boolean {
+    return this.client.ready && this.client.alive;
+  }
+
+  /** Drains queued events and folds them into the combat counters. */
+  private consumeEvents(): void {
+    for (const event of this.client.drainEvents()) {
+      if (event.type === EventType.Shot && event.shooterId === this.playerId) this.shotsFired += 1;
+      else if (event.type === EventType.Hit) {
+        this.hitsLanded += 1;
+        if (event.killed) this.killsDealt += 1;
+      }
+    }
   }
 
   /** Distance between our predicted position and the server's latest word on it. */
@@ -213,6 +301,7 @@ export class SimClient {
     this.timer = setInterval(() => {
       try {
         this.client.update(performance.now());
+        this.consumeEvents();
       } catch (err) {
         this.errors.push(`${this.options.name}: ${err instanceof Error ? err.stack : String(err)}`);
       }
