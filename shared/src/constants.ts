@@ -312,6 +312,18 @@ export const STORM_CENTRE_DRIFT = 0.55;
 /** Vertical extent of the drawn storm wall. */
 export const STORM_WALL_HEIGHT = 90;
 
+// ------------------------------------------------------------------- minimap
+
+export const MINIMAP_SIZE = 190;
+/** Redraw the static layer only when the map changes; this is the padding. */
+export const MINIMAP_PADDING = 4;
+export const MINIMAP_PLAYER_SIZE = 5;
+
+// -------------------------------------------------------- performance readout
+
+/** Frames averaged before the HUD updates its frame-time figure. */
+export const PERF_SAMPLE_FRAMES = 30;
+
 // ------------------------------------------------------------------ gameplay
 
 export const MAX_PLAYERS = 20;

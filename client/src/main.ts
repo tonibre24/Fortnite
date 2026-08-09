@@ -9,6 +9,7 @@ import {
   PICKUP_RANGE,
   PLAYER_EYE_HEIGHT,
   MoveMode,
+  PERF_SAMPLE_FRAMES,
   RoundPhase,
   SHIELD_POTION_USE_TICKS,
   STORM_PHASES,
@@ -32,6 +33,7 @@ import { RoundView } from './render/RoundView.js';
 import { Tracers } from './render/Tracers.js';
 import { WorldView } from './render/WorldView.js';
 import { Hud } from './ui/Hud.js';
+import { Minimap } from './ui/Minimap.js';
 
 function resolveServerUrl(): string {
   const override = new URLSearchParams(window.location.search).get('server');
@@ -51,6 +53,7 @@ const playerView = new PlayerView(renderer.scene);
 const tracers = new Tracers(renderer.scene);
 const lootView = new LootView(renderer.scene);
 const roundView = new RoundView(renderer.scene);
+const minimap = new Minimap();
 
 const client = new GameClient({
   url: resolveServerUrl(),
@@ -67,6 +70,38 @@ let spectating = 0;
 /** Ticks the local player has held fire on a consumable, for the use bar. */
 let useTicks = 0;
 const eye = vec3();
+
+/**
+ * Rolling frame-time readout, split into the game's own work and the draw
+ * itself. The split matters: the simulation, interpolation and HUD are what
+ * this code controls, while the draw is bounded by whatever GPU is present.
+ */
+let frameSamples = 0;
+let frameTotal = 0;
+let cpuTotal = 0;
+let drawTotal = 0;
+let lastFrameStart = 0;
+let perfText = '';
+
+function samplePerf(now: number, cpuMs: number, drawMs: number): void {
+  if (lastFrameStart !== 0) {
+    frameTotal += now - lastFrameStart;
+    cpuTotal += cpuMs;
+    drawTotal += drawMs;
+    frameSamples += 1;
+  }
+  lastFrameStart = now;
+  if (frameSamples < PERF_SAMPLE_FRAMES) return;
+  const frame = frameTotal / frameSamples;
+  perfText =
+    `${(1000 / frame).toFixed(0)} fps  ${frame.toFixed(1)} ms/frame\n` +
+    `${(cpuTotal / frameSamples).toFixed(2)} ms game  ${(drawTotal / frameSamples).toFixed(2)} ms draw\n` +
+    `${renderer.drawCalls} draws  ${(renderer.triangles / 1000).toFixed(0)}k tris`;
+  frameSamples = 0;
+  frameTotal = 0;
+  cpuTotal = 0;
+  drawTotal = 0;
+}
 
 /** The nearest item within reach, which is what E would take. */
 function itemInReach(): { label: string; chest: boolean } | null {
@@ -268,13 +303,27 @@ function frame(): void {
     );
   }
 
+  minimap.draw(
+    client.map,
+    client.mapVersion,
+    client.round,
+    client.predictor.state.pos.x,
+    client.predictor.state.pos.z,
+    dequantizeYaw(client.predictor.state.yawQ),
+  );
   roundView.update(client.round);
   lootView.update(client.loot, now);
   tracers.update(now);
   tracers.flush();
   hud.update(now, dequantizeYaw(client.predictor.state.yawQ));
   hud.setStats(buildStats());
+  const cpuMs = performance.now() - now;
+  const drawStart = performance.now();
   renderer.render();
+  const drawMs = performance.now() - drawStart;
+
+  samplePerf(now, cpuMs, drawMs);
+  hud.setPerf(perfText);
   requestAnimationFrame(frame);
 }
 

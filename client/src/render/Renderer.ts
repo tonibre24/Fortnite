@@ -37,4 +37,13 @@ export class Renderer {
   render(): void {
     this.renderer.render(this.scene, this.camera);
   }
+
+  /** Draw calls and triangles for the frame just rendered. */
+  get drawCalls(): number {
+    return this.renderer.info.render.calls;
+  }
+
+  get triangles(): number {
+    return this.renderer.info.render.triangles;
+  }
 }

@@ -57,6 +57,7 @@ export class Hud {
   private readonly useBarEl = mustFind('usebar');
   private readonly useBarFill = mustFind('usebar').querySelector('i') as HTMLElement;
   private readonly roundEl = mustFind('round');
+  private readonly perfEl = mustFind('perf');
   private readonly slotEls: HTMLElement[] = [];
   private inventorySignature = '';
 
@@ -84,6 +85,10 @@ export class Hud {
 
   setStats(lines: string[]): void {
     this.statsEl.textContent = lines.join('\n');
+  }
+
+  setPerf(text: string): void {
+    this.perfEl.textContent = text;
   }
 
   setVitals(health: number, shield: number): void {
