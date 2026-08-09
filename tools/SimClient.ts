@@ -314,12 +314,14 @@ export class SimClient {
 
     this.client.predictor.onCorrection = (before, after, seq, pending) => {
       const d = distance(before.pos, after.pos);
+      this.correctionTicks.push(this.client.serverTick);
       if (d <= this.worstDistance) return;
       this.worstDistance = d;
       const p = this.client.predictor.pending;
       const range = p.length === 0 ? 'none' : `${p[0]!.seq}..${p[p.length - 1]!.seq}`;
       this.worstCorrection =
-        `${options.name} moved ${d.toFixed(4)} lastProcessed=${seq} replayed=${range} (${pending})\n` +
+        `${options.name} moved ${d.toFixed(4)} at tick ${this.client.serverTick} ` +
+        `lastProcessed=${seq} replayed=${range} (${pending})\n` +
         `      predicted ${fmt(before)}\n` +
         `      authority ${fmt(after)}`;
     };
@@ -327,6 +329,15 @@ export class SimClient {
 
   /** Details of the largest correction seen, for the report. */
   worstCorrection: string | null = null;
+  /**
+   * Server tick of every correction, deliberately NOT cleared by `resetStats`.
+   *
+   * The counters below are reset once the handshake completes so connection
+   * noise stays out of the averages, which also used to hide corrections that
+   * happened while joining - and joining is exactly when an unsettled spawn
+   * state shows up. This list covers the whole session so those cannot hide.
+   */
+  readonly correctionTicks: number[] = [];
   private worstDistance = 0;
 
   get playerId(): number {

@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   Button,
+  INPUT_STARVE_GRACE_TICKS,
   RECONCILE_EPSILON,
   Rng,
+  StateFlag,
   decodeSnapshot,
   encodeSnapshot,
   quantizePitch,
@@ -113,6 +115,52 @@ describe('prediction and reconciliation', () => {
     }
 
     expect(predictor.maxError).toBe(0);
+  });
+
+  /**
+   * A spawn point is a pose sitting exactly on the terrain, not a state the
+   * movement code ever produces. If the server hands that out and only settles
+   * it onto the ground on its first simulated step, a joining client predicts
+   * from an unsettled base - accelerating as if airborne - and eats a
+   * correction it had no way to see coming. So the join state has to be a fixed
+   * point already: idle ticks must not move it, and prediction from it must be
+   * exact.
+   */
+  it('hands a joining client a spawn state it can predict from', () => {
+    const world = new World(SEED);
+    const player = world.addPlayer(1, 'test');
+    const predictor = new Predictor();
+    // What the client really initialises from is the first snapshot it decodes.
+    predictor.reset(roundTrip(world, 1, 0));
+
+    const spawn = { ...player.state.pos };
+    // Long enough without input that the server gives up waiting and starts
+    // simulating the player idle - the step that used to settle them.
+    for (let i = 0; i < INPUT_STARVE_GRACE_TICKS + 2; i++) world.step();
+    expect(world.starvationSteps).toBeGreaterThan(0);
+    // An idle tick on a settled, stationary player has to be a no-op, or the
+    // client's base silently stops matching the server's.
+    expect(player.state.pos).toEqual(spawn);
+    expect(player.state.flags & StateFlag.OnGround).not.toBe(0);
+
+    const rng = new Rng(SEED + 7);
+    const inFlight: InputCommand[] = [];
+    // The client runs ahead while its first commands are still in the air.
+    for (let seq = 1; seq <= 8; seq++) {
+      const cmd = randomCommand(rng, seq);
+      predictor.applyCommand(cmd, world.map.world);
+      inFlight.push(cmd);
+    }
+
+    for (const cmd of inFlight) {
+      player.enqueue([cmd]);
+      world.step();
+      const authoritative = roundTrip(world, 1, player.lastProcessedSeq);
+      predictor.reconcile(authoritative, player.lastProcessedSeq, world.map.world);
+      expect(predictor.lastError).toBe(0);
+    }
+
+    expect(predictor.correctionCount).toBe(0);
   });
 
   it('corrects the client when a command never reaches the server', () => {

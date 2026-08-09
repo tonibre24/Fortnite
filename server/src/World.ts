@@ -21,6 +21,7 @@ import {
   emptyStack,
   isConsumableKind,
   lerp,
+  settleOnGround,
   stepMovement,
   type GameEvent,
   type GameMap,
@@ -104,6 +105,7 @@ export class World {
     const spawn = this.map.spawns[this.spawnCursor % this.map.spawns.length]!;
     this.spawnCursor += 1;
     const player = new ServerPlayer(id, name, spawn);
+    settleOnGround(player.state, this.map.world);
     this.equipStarterWeapon(player);
     this.players.set(id, player);
     return player;
@@ -392,6 +394,7 @@ export class World {
     player.stormDebt = 0;
     player.pendingStormDamage = 0;
     player.useTicks = 0;
+    settleOnGround(state, this.map.world);
     player.teleport();
     this.equipStarterWeapon(player);
   }

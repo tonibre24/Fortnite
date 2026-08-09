@@ -133,6 +133,11 @@ export class GameClient {
     return (this.predictor.state.flags & StateFlag.Alive) !== 0;
   }
 
+  /** Server tick of the most recent snapshot applied, for diagnostics. */
+  get serverTick(): number {
+    return this.lastAppliedTick;
+  }
+
   /** Everyone the server still lists, including the local player. */
   get playerCount(): number {
     return this.remotes.size + (this.ready ? 1 : 0);

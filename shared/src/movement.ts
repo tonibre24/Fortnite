@@ -21,6 +21,7 @@ import {
   SPRINT_SPEED,
   STEP_HEIGHT,
   TERMINAL_VELOCITY,
+  TICK_DT,
   WALK_SPEED,
 } from './constants.js';
 import { dequantizeYaw, f32 } from './math.js';
@@ -291,4 +292,22 @@ function moveHorizontal(
 /** Command a disconnected or starved player is simulated with: look, no intent. */
 export function idleCommand(seq: number, yawQ: number, pitchQ: number, slot = 0): InputCommand {
   return { seq, buttons: 0, yawQ, pitchQ, renderTick: 0, slot };
+}
+
+/**
+ * Settles a freshly placed player onto the ground.
+ *
+ * A spawn point sits exactly on the terrain surface, which is not a state
+ * `stepMovement` ever produces: the first simulated step drops the player a
+ * fraction, resolves the collision and raises `OnGround`. Until that happens the
+ * position is a pose, not a simulation state, and a client that starts
+ * predicting from it walks a different path than the server does - a real
+ * divergence the client cannot see coming, since nothing about the snapshot says
+ * "not settled yet".
+ *
+ * Running one idle step here produces exactly the state the next real step would
+ * have started from, so prediction matches from the very first command.
+ */
+export function settleOnGround(state: PlayerState, world: CollisionWorld): void {
+  stepMovement(state, idleCommand(0, state.yawQ, state.pitchQ, state.slot), world, TICK_DT);
 }

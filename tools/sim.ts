@@ -5,7 +5,16 @@
  * client netcode with randomized input, runs an accelerated round, then prints
  * a report. Exits non-zero when anything looks wrong, so it doubles as CI.
  */
-import { RECONCILE_EPSILON, ROUND_PHASE_NAMES, STORM_PHASES, TICK_MS } from '@br/shared';
+import {
+  BUS_DURATION_TICKS,
+  LOBBY_COUNTDOWN_TICKS,
+  RECONCILE_EPSILON,
+  ROUND_END_TICKS,
+  ROUND_PHASE_NAMES,
+  STORM_PHASES,
+  TICK_MS,
+  stormTotalTicks,
+} from '@br/shared';
 import { GameServer } from '../server/src/GameServer.js';
 import { SimClient } from './SimClient.js';
 
@@ -20,6 +29,18 @@ interface SimOptions {
   verbose: boolean;
 }
 
+/**
+ * Lobby countdown, bus ride, the whole storm and the victory screen.
+ *
+ * Derived rather than hardcoded so that retuning the storm or the bus keeps the
+ * sim covering a complete round - a shorter default would stop before anyone
+ * landed, and the combat and loot checks would have nothing to look at.
+ */
+function fullRoundSeconds(): number {
+  const ticks = LOBBY_COUNTDOWN_TICKS + BUS_DURATION_TICKS + stormTotalTicks() + ROUND_END_TICKS;
+  return Math.ceil((ticks * TICK_MS) / 1000);
+}
+
 function readOptions(): SimOptions {
   const num = (name: string, fallback: number): number => {
     const raw = process.env[name];
@@ -30,7 +51,11 @@ function readOptions(): SimOptions {
   };
   return {
     clients: num('SIM_CLIENTS', 8),
-    seconds: num('SIM_SECONDS', 20),
+    seconds: num('SIM_SECONDS', fullRoundSeconds()),
+    // 4x leaves the tick loop ~12ms of budget against a sub-4ms tick. Faster
+    // rounds start dropping ticks to container scheduling jitter, and a flaky
+    // failure on the one signal that means "the server fell behind" is worse
+    // than a slower run.
     timeScale: num('SIM_TIME_SCALE', 4),
     latencyMs: num('SIM_LATENCY_MS', 60),
     jitterMs: num('SIM_JITTER_MS', 20),
@@ -39,6 +64,9 @@ function readOptions(): SimOptions {
     verbose: process.env.SIM_VERBOSE === '1',
   };
 }
+
+/** Share of a round that may be lost to host scheduling before it counts. */
+const MAX_DROPPED_TICK_FRACTION = 0.01;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -131,6 +159,8 @@ function printReport(
   const connected = clients.filter((c) => c.playerId !== 0);
   const clientErrors = clients.flatMap((c) => c.errors);
   const expectedTicks = opts.seconds * (1000 / TICK_MS);
+  /** Wall-clock budget per tick once the round is played back accelerated. */
+  const realIntervalMs = TICK_MS / opts.timeScale;
 
   const maxReconcileError = Math.max(0, ...connected.map((c) => c.maxPredictionError));
   const avgReconcileError = average(connected.map((c) => c.averagePredictionError));
@@ -150,8 +180,8 @@ function printReport(
   console.log('server');
   console.log(`  ticks            ${stats.ticks} (expected ~${Math.round(expectedTicks)})`);
   console.log(`  avg tick         ${server.averageTickMs.toFixed(3)} ms`);
-  console.log(`  max tick         ${stats.maxDurationMs.toFixed(3)} ms`);
-  console.log(`  dropped ticks    ${stats.droppedTicks}`);
+  console.log(`  max tick         ${stats.maxDurationMs.toFixed(3)} ms of ${realIntervalMs.toFixed(1)} ms budget`);
+  console.log(`  dropped ticks    ${stats.droppedTicks} (host scheduling, not tick cost)`);
   console.log(`  input starvation ${server.world.starvationSteps} idle steps`);
   console.log(`  exceptions       ${server.errors.length}`);
   console.log('');
@@ -205,6 +235,12 @@ function printReport(
   console.log(
     `  live lead        ${average(liveError).toFixed(3)} avg, ${Math.max(0, ...liveError).toFixed(3)} max units`,
   );
+  // Includes the handshake, which the counters above deliberately exclude.
+  const correctionTicks = connected.flatMap((c) => c.correctionTicks).sort((a, b) => a - b);
+  console.log(
+    `  since connect    ${correctionTicks.length} corrections` +
+      (correctionTicks.length > 0 ? ` at ticks ${correctionTicks.slice(0, 12).join(', ')}` : ''),
+  );
   console.log('');
 
   for (const c of connected.map((c) => c.worstCorrection).filter((c) => c !== null).slice(0, 3)) {
@@ -224,7 +260,20 @@ function printReport(
   if (connected.length < clients.length) {
     problems.push(`${clients.length - connected.length} clients failed to join`);
   }
-  if (stats.droppedTicks > 0) problems.push(`${stats.droppedTicks} dropped ticks`);
+  // Whether the server can compute a tick inside its budget is the real
+  // question, and `max tick` answers it directly. Dropped ticks at an
+  // accelerated time scale mostly measure whether the host descheduled this
+  // process, which is not a property of the server, so tolerate a few.
+  if (stats.droppedTicks > expectedTicks * MAX_DROPPED_TICK_FRACTION) {
+    problems.push(
+      `${stats.droppedTicks} dropped ticks (over ${(MAX_DROPPED_TICK_FRACTION * 100).toFixed(0)}% of the round)`,
+    );
+  }
+  if (stats.maxDurationMs > realIntervalMs) {
+    problems.push(
+      `slowest tick took ${stats.maxDurationMs.toFixed(1)}ms, over the ${realIntervalMs.toFixed(1)}ms budget`,
+    );
+  }
   if (stats.ticks < expectedTicks * 0.9) {
     problems.push(`only ${stats.ticks} of ~${Math.round(expectedTicks)} ticks ran`);
   }
