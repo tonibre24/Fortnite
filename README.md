@@ -48,10 +48,21 @@ or procedurally generated. No third-party game content is used — see
 
 - Original low-poly arena, "Riftfront Yard", generated procedurally from a shared
   definition used by both the renderer and the physics
-- Third-person over-the-shoulder camera with wall avoidance
+- Stylised flat-shaded art direction at a fixed late afternoon: one directional sun with
+  a shadow map fitted to the local player, hemispheric fill, a procedural sky gradient
+  with a horizon band, and distance fog matched to it so the map edge dissolves
+- Seeded map decoration — window openings, door surrounds, cornices, interior floors,
+  ground colour variation, and a landscape of trees, rocks, fences and outbuildings
+  beyond the walls. Every repeated prop is one instanced draw call
+- Instanced combat VFX: tracers that fade over distance, muzzle flashes, and impact
+  sparks and dust coloured by the surface that was hit
+- Articulated low-poly characters — one skinned mesh per player, posed procedurally from
+  the replicated movement state (idle, walk, sprint, jump, freefall, glide, dead)
+- A shader-driven rift boundary with scrolling noise, a soft leading edge and fresnel
 - Fully procedural audio (Web Audio synthesis — no audio files at all)
 - Landing screen, HUD, Tab scoreboard, pause/settings menu, results screen
-- Development performance panel (FPS, ping, entities, effects, prediction error)
+- F3 performance overlay (fps, frame time, 1% low, draw calls, triangles, texture memory,
+  netcode diagnostics) and a scripted 20-player benchmark, `pnpm bench`
 
 ---
 
@@ -155,6 +166,7 @@ into window 2, and the code is pre-filled.
 ```bash
 pnpm test:integration   # boots the server, connects two real clients, fights, asserts
 pnpm verify:browser     # drives two real Chromium windows through a full match
+pnpm bench              # 20 players + full VFX; reports the 1% low frame time
 ```
 
 ---
@@ -173,6 +185,7 @@ pnpm verify:browser     # drives two real Chromium windows through a full match
 | `pnpm test:integration` | Integration test: real server process + two real clients |
 | `pnpm test:all`         | Unit + integration                                       |
 | `pnpm verify:browser`   | Two-Chromium end-to-end smoke check                      |
+| `pnpm bench`            | Scripted 20-player render benchmark at 1080p             |
 | `pnpm typecheck`        | `tsc --noEmit` across every package                      |
 | `pnpm lint`             | ESLint (type-aware) across the workspace                 |
 | `pnpm format`           | Prettier write                                           |

@@ -6,6 +6,8 @@ import { ShadowGenerator } from '@babylonjs/core/Lights/Shadows/shadowGenerator'
 import '@babylonjs/core/Lights/Shadows/shadowGeneratorSceneComponent';
 import type { AbstractMesh } from '@babylonjs/core/Meshes/abstractMesh';
 import { Scene } from '@babylonjs/core/scene';
+import { RenderingGroup } from '@babylonjs/core/Rendering/renderingGroup';
+import type { SubMesh } from '@babylonjs/core/Meshes/subMesh';
 import type { Vec3 } from '@riftfront/shared';
 import { buildSky, type ProceduralSky } from './Sky.js';
 import { FOG, LIGHTING, SKY, SUN_DIRECTION } from './palette.js';
@@ -105,6 +107,24 @@ export class Environment {
     }
 
     this.sky = buildSky(scene);
+
+    /*
+     * Draw order inside the opaque pass.
+     *
+     * Babylon renders opaque meshes in whatever order they were added, which put the sky
+     * dome first and made the GPU shade every pixel of the most expensive fragment shader
+     * in the scene before the world painted over most of them. Sorting front-to-back and
+     * forcing the sky last means the depth test rejects the sky everywhere the world
+     * already is — on a fill-limited integrated GPU that is the cheapest frame time
+     * available anywhere in this renderer.
+     */
+    const skyMesh = this.sky.mesh;
+    scene.setRenderingOrder(0, (a: SubMesh, b: SubMesh) => {
+      const aSky = a.getMesh() === skyMesh;
+      const bSky = b.getMesh() === skyMesh;
+      if (aSky !== bSky) return aSky ? 1 : -1;
+      return RenderingGroup.frontToBackSortCompare(a, b);
+    });
 
     // Build the light-space basis once; the sun never moves.
     this.lightForward.copyFrom(direction);

@@ -104,6 +104,9 @@ function parseArgs(argv) {
       case '--boundary':
         args.camera = 'boundary';
         break;
+      // pnpm forwards a bare `--` separator; ignore it rather than failing on it.
+      case '--':
+        break;
       default:
         if (arg.startsWith('--')) throw new Error(`unknown flag ${arg}`);
     }

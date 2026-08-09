@@ -100,16 +100,17 @@ async function main() {
     await alpha.page.fill('#display-name', 'AlphaOne');
     await alpha.page.click('button:has-text("Create match")');
 
-    const alphaJoined = await waitUntil(
-      'alpha to enter the match',
-      alpha.page,
-      () => {
-        const hud = document.getElementById('hud');
-        return hud !== null && !hud.hidden;
-      },
-    );
+    const alphaJoined = await waitUntil('alpha to enter the match', alpha.page, () => {
+      const hud = document.getElementById('hud');
+      return hud !== null && !hud.hidden;
+    });
     check('creating a match enters the HUD', alphaJoined);
 
+    // The shareable URL is written when the server's welcome message lands, which can be
+    // a frame or two after the HUD appears — poll rather than reading once.
+    await waitUntil('the room code to appear in the URL', alpha.page, () =>
+      /[?&]room=[A-Z0-9]{5}/.test(window.location.search),
+    );
     const roomCode = await alpha.page.evaluate(() => {
       return new URLSearchParams(window.location.search).get('room') ?? '';
     });
@@ -121,14 +122,10 @@ async function main() {
     await bravo.page.fill('#room-code', roomCode);
     await bravo.page.click('button:has-text("Join match")');
 
-    const bravoJoined = await waitUntil(
-      'bravo to enter the match',
-      bravo.page,
-      () => {
-        const hud = document.getElementById('hud');
-        return hud !== null && !hud.hidden;
-      },
-    );
+    const bravoJoined = await waitUntil('bravo to enter the match', bravo.page, () => {
+      const hud = document.getElementById('hud');
+      return hud !== null && !hud.hidden;
+    });
     check('a second client can join by room code', bravoJoined);
 
     // --- 4. Both clients see two players -------------------------------------
@@ -163,7 +160,7 @@ async function main() {
     await alpha.page.click('#render-canvas');
     await sleep(300);
 
-// A screenshot is written so the rendered arena can be inspected after a run.
+    // A screenshot is written so the rendered arena can be inspected after a run.
     if (SCREENSHOT_PATH) {
       await alpha.page.screenshot({ path: SCREENSHOT_PATH });
       notes.push(`  INFO  screenshot written to ${SCREENSHOT_PATH}`);
@@ -210,11 +207,18 @@ async function main() {
 
     // --- 8. Reloading works --------------------------------------------------
     await alpha.page.keyboard.press('KeyR');
-    await sleep(300);
-    const reloading = await alpha.page.evaluate(() => {
-      const bar = document.querySelector('.reload-bar');
-      return bar !== null && !bar.hidden;
-    });
+    // Polled rather than slept on. The HUD only refreshes inside the render loop, and
+    // under CI's software rasteriser a single frame can take longer than a fixed wait —
+    // the assertion is that the bar appears at all, not how quickly.
+    const reloading = await waitUntil(
+      'the reload bar to appear',
+      alpha.page,
+      () => {
+        const bar = document.querySelector('.reload-bar');
+        return bar !== null && !bar.hidden;
+      },
+      4000,
+    );
     check('reloading shows reload progress', reloading);
 
     await sleep(2400);
@@ -232,7 +236,11 @@ async function main() {
     const shotgunAmmo = await alpha.page.evaluate(
       () => document.querySelector('.weapon .ammo span')?.textContent ?? '',
     );
-    check('weapon switching reaches the shotgun', shotgunAmmo === '6', `${shotgunName} ${shotgunAmmo}`);
+    check(
+      'weapon switching reaches the shotgun',
+      shotgunAmmo === '6',
+      `${shotgunName} ${shotgunAmmo}`,
+    );
 
     // --- 10. Pause menu ------------------------------------------------------
     await alpha.page.keyboard.press('Escape');
@@ -271,9 +279,7 @@ main()
     console.log('\nBrowser smoke check\n');
     for (const line of notes) console.log(line);
     for (const line of failures) console.log(line);
-    console.log(
-      `\n${notes.length} passed, ${failures.length} failed\n`,
-    );
+    console.log(`\n${notes.length} passed, ${failures.length} failed\n`);
     process.exit(failures.length === 0 ? 0 : 1);
   })
   .catch((error) => {

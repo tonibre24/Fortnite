@@ -42,6 +42,7 @@ import { Avatar } from '../render/Avatar.js';
 import { buildAvatarRig, type AvatarRig } from '../render/AvatarRig.js';
 import { RiftField } from '../render/RiftField.js';
 import { Environment } from '../render/Environment.js';
+import { RenderStats } from '../render/RenderStats.js';
 import { buildProps } from '../render/Props.js';
 import { buildDecorPlan } from '../render/decorPlan.js';
 import { buildArenaScenery } from '../render/SceneBuilder.js';
@@ -69,6 +70,23 @@ type AppPhase = 'menu' | 'connecting' | 'playing';
 /** Prevents a long stall (tab in background) from being replayed as hundreds of steps. */
 const MAX_STEPS_PER_FRAME = 5;
 
+/** Fed to the hidden perf panel so it keeps its frame-time history without sampling. */
+const EMPTY_PERF_COUNTERS = {
+  pingMs: 0,
+  players: 0,
+  entities: 0,
+  activeEffects: 0,
+  pooledEffects: 0,
+  serverTickHz: 0,
+  pendingInputs: 0,
+  reconcileCorrections: 0,
+  lastReconcileError: 0,
+  drawCalls: 0,
+  triangles: 0,
+  textureBytes: 0,
+  textureCount: 0,
+};
+
 export class GameApp {
   private readonly canvas: HTMLCanvasElement;
   private readonly uiRoot: HTMLElement;
@@ -83,6 +101,7 @@ export class GameApp {
   private environment: Environment | null = null;
   private avatarRig: AvatarRig | null = null;
   private rift: RiftField | null = null;
+  private renderStats: RenderStats | null = null;
 
   private readonly avatars = new Map<string, Avatar>();
   private readonly remotes = new RemotePlayerBuffer();
@@ -210,6 +229,7 @@ export class GameApp {
     this.props = buildProps(scene, decor, { environment: this.environment });
     this.avatarRig = buildAvatarRig(scene);
     this.rift = new RiftField(scene);
+    this.renderStats = new RenderStats(scene);
     this.effects = new EffectsSystem(scene);
     this.cameraRig = new CameraRig(scene, this.colliders);
 
@@ -367,7 +387,7 @@ export class GameApp {
 
     this.effects?.update(dtSeconds);
     this.weapons.update(dtSeconds);
-    this.updatePerfPanel(frameMs);
+    this.updatePerfPanel(frameMs, nowMs);
 
     this.scene.render();
   }
@@ -1018,10 +1038,16 @@ export class GameApp {
   // Diagnostics
   // -------------------------------------------------------------------------
 
-  private updatePerfPanel(frameMs: number): void {
-    if (!this.perf.isVisible) return;
+  private updatePerfPanel(frameMs: number, nowMs: number): void {
+    // The panel keeps its own frame-time history even while hidden, so it is always fed;
+    // only the expensive counter sampling is skipped when nobody is looking.
+    if (!this.perf.isVisible) {
+      this.perf.update(frameMs, EMPTY_PERF_COUNTERS);
+      return;
+    }
 
     const stats = this.localPlayer?.stats;
+    const render = this.renderStats?.sample(nowMs);
     this.perf.update(frameMs, {
       pingMs: this.network?.roundTripMs ?? 0,
       players: this.network?.state?.players.size ?? 0,
@@ -1032,7 +1058,10 @@ export class GameApp {
       pendingInputs: stats?.pendingCommands ?? 0,
       reconcileCorrections: stats?.corrections ?? 0,
       lastReconcileError: stats?.lastError ?? 0,
-      drawCalls: this.scene?.getActiveMeshes().length ?? 0,
+      drawCalls: render?.drawCalls ?? 0,
+      triangles: render?.triangles ?? 0,
+      textureBytes: render?.textureBytes ?? 0,
+      textureCount: render?.textureCount ?? 0,
     });
   }
 
@@ -1054,6 +1083,7 @@ export class GameApp {
 
     this.input?.dispose();
     this.audio.dispose();
+    this.renderStats?.dispose();
     this.effects?.dispose();
     this.rift?.dispose();
     this.avatarRig?.dispose();
