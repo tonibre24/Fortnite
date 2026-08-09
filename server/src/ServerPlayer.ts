@@ -39,6 +39,10 @@ export class ServerPlayer {
   killedBy = 0;
   /** Commands simulated this tick, held for the combat pass that follows movement. */
   readonly resolvedCommands: InputCommand[] = [];
+  /** Whether interact was held last command, so a hold is one pickup not many. */
+  interactHeld = false;
+  /** Ticks spent so far using the consumable in hand. */
+  useTicks = 0;
 
   constructor(
     readonly id: number,

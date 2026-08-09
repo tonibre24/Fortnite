@@ -35,7 +35,7 @@ function walk(map: GameMap, from: Vec3, yaw: number, ticks: number, buttons = Bu
   state.pos.z = from.z;
   const yawQ = quantizeYaw(yaw);
   for (let i = 0; i < ticks; i++) {
-    stepMovement(state, { seq: i + 1, buttons, yawQ, pitchQ: 0, renderTick: 0 }, map.world, TICK_DT);
+    stepMovement(state, { seq: i + 1, buttons, yawQ, pitchQ: 0, renderTick: 0, slot: 0 }, map.world, TICK_DT);
   }
   return { ...state.pos };
 }

@@ -2,6 +2,8 @@ import {
   Button,
   EventType,
   MAX_PITCH,
+  ItemKind,
+  PICKUP_RANGE,
   PLAYER_EYE_HEIGHT,
   PLAYER_HEIGHT,
   Rng,
@@ -35,6 +37,8 @@ const TURN_RATE = 2.5;
 const ENGAGE_RANGE = 90;
 /** Radians of aim error, so bots miss like players do. */
 const AIM_ERROR = 0.05;
+/** How far a bot will detour for an item it can see. */
+const LOOT_SEEK_RANGE = 600;
 
 /**
  * Randomized input that looks enough like a player to exercise every code path:
@@ -46,6 +50,8 @@ class BotInput implements InputSource {
   private pitch = 0;
   private turn = 0;
   private ticksLeft = 0;
+  private slot = 0;
+  private interactHeld = false;
   private client: GameClient | null = null;
 
   constructor(private readonly rng: Rng) {
@@ -67,7 +73,27 @@ class BotInput implements InputSource {
     // Engaging beats wandering. Aiming at the interpolated position - what the
     // bot can actually see - is what puts lag compensation under test: the
     // server has to rewind to agree that the shot connected.
+    // Loot first when nothing is shooting at us: this is what puts pickups,
+    // chests and slot switching under load in the sim.
     const target = this.nearestTarget();
+    if (target === null) {
+      const item = this.nearestLoot();
+      if (item !== null) {
+        this.yaw = item.yaw;
+        this.pitch = 0;
+        const buttons =
+          Button.Forward | Button.Sprint | (item.inReach && !this.interactHeld ? Button.Interact : 0);
+        this.interactHeld = item.inReach;
+        return {
+          buttons,
+          yawQ: quantizeYaw(this.yaw),
+          pitchQ: quantizePitch(this.pitch),
+          slot: this.slot,
+        };
+      }
+    }
+    this.interactHeld = false;
+
     if (target !== null) {
       this.yaw = target.yaw;
       this.pitch = target.pitch;
@@ -75,6 +101,7 @@ class BotInput implements InputSource {
         buttons: (this.buttons & ~Button.Sprint) | Button.Fire,
         yawQ: quantizeYaw(this.yaw),
         pitchQ: quantizePitch(this.pitch),
+        slot: this.slot,
       };
     }
 
@@ -85,6 +112,36 @@ class BotInput implements InputSource {
       buttons: this.buttons,
       yawQ: quantizeYaw(this.yaw),
       pitchQ: quantizePitch(this.pitch),
+      slot: this.slot,
+    };
+  }
+
+  /** Closest item worth walking to, and whether we are already on top of it. */
+  private nearestLoot(): { yaw: number; inReach: boolean } | null {
+    const client = this.client;
+    if (client === null || !client.ready || !client.alive) return null;
+
+    const self = client.predictor.state.pos;
+    let bestDistSq = LOOT_SEEK_RANGE * LOOT_SEEK_RANGE;
+    let bestX = 0;
+    let bestZ = 0;
+    let found = false;
+    for (const item of client.loot.values()) {
+      // Chests are worth opening; a gun on the floor is worth taking.
+      if (item.kind === ItemKind.None) continue;
+      const dx = item.x - self.x;
+      const dz = item.z - self.z;
+      const distSq = dx * dx + dz * dz;
+      if (distSq >= bestDistSq) continue;
+      bestDistSq = distSq;
+      bestX = dx;
+      bestZ = dz;
+      found = true;
+    }
+    if (!found) return null;
+    return {
+      yaw: Math.atan2(-bestX, -bestZ),
+      inReach: bestDistSq < PICKUP_RANGE * PICKUP_RANGE * 0.6,
     };
   }
 
@@ -162,6 +219,15 @@ export class SimClient {
   shotsFired = 0;
   hitsLanded = 0;
   killsDealt = 0;
+
+  /** Loot the bot has managed to collect, for the sim report. */
+  get carried(): number {
+    let count = 0;
+    for (const slot of this.client.predictor.state.inventory) {
+      if (slot.kind !== ItemKind.None) count += 1;
+    }
+    return count;
+  }
 
   constructor(private readonly options: SimClientOptions) {
     const rng = new Rng(options.seed);

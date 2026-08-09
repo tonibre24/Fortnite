@@ -218,6 +218,100 @@ body {
   color: #e8c46e;
 }
 
+/* ------------------------------------------------------------- inventory */
+
+#inventory {
+  position: absolute;
+  left: 50%;
+  bottom: 20px;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 6px;
+}
+
+#inventory .slot {
+  width: 74px;
+  height: 50px;
+  background: rgba(8, 10, 14, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 3px;
+  position: relative;
+  padding: 3px 5px;
+  font-size: 11px;
+  overflow: hidden;
+}
+
+#inventory .slot.held {
+  border-color: #f2f5f8;
+  background: rgba(30, 36, 46, 0.8);
+}
+
+#inventory .slot .idx {
+  opacity: 0.55;
+  font-size: 10px;
+}
+
+#inventory .slot .label {
+  display: block;
+  margin-top: 2px;
+  line-height: 1.15;
+}
+
+#inventory .slot .qty {
+  position: absolute;
+  right: 5px;
+  bottom: 3px;
+  font-weight: 600;
+}
+
+#inventory .slot .tint {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+}
+
+/* ----------------------------------------------------------- interaction */
+
+#prompt {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 56%;
+  text-align: center;
+  font-size: 14px;
+  font-weight: 600;
+  display: none;
+}
+
+#prompt.show {
+  display: block;
+}
+
+#usebar {
+  position: absolute;
+  left: 50%;
+  top: 60%;
+  width: 180px;
+  height: 6px;
+  margin-left: -90px;
+  background: rgba(8, 10, 14, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  display: none;
+}
+
+#usebar.show {
+  display: block;
+}
+
+#usebar > i {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: #6ee7a0;
+}
+
 /* ------------------------------------------------------------- kill feed */
 
 #killfeed {

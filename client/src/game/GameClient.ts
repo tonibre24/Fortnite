@@ -11,9 +11,10 @@ import {
   peekSnapshotTick,
   StateFlag,
   type GameEvent,
+  type ClientBaseline,
   type GameMap,
   type InputCommand,
-  type PlayerState,
+  type LootItem,
   type WelcomeMsg,
 } from '@br/shared';
 import { Connection, type ConnectionStatus, type SocketLike } from '../net/Connection.js';
@@ -29,6 +30,8 @@ export interface InputSample {
   buttons: number;
   yawQ: number;
   pitchQ: number;
+  /** Inventory slot the player wants in hand. */
+  slot: number;
 }
 
 export interface InputSource {
@@ -73,12 +76,14 @@ export class GameClient {
    * Kept bounded so a host that never drains cannot grow this without limit.
    */
   readonly events: GameEvent[] = [];
+  /** Everything currently lying in the world, straight from the last snapshot. */
+  loot: ReadonlyMap<number, LootItem> = new Map();
 
   private readonly interpolator: RemoteInterpolator;
   private readonly input: InputSource;
   private readonly timeScale: number;
   private readonly tickMs: number;
-  private readonly snapshots = new Map<number, Map<number, PlayerState>>();
+  private readonly snapshots = new Map<number, ClientBaseline>();
   private accumulator = 0;
   private lastUpdate = 0;
   private hasLastUpdate = false;
@@ -174,7 +179,8 @@ export class GameClient {
 
     this.snapshotsReceived += 1;
     this.lastAppliedTick = decoded.tick;
-    this.snapshots.set(decoded.tick, decoded.players);
+    this.snapshots.set(decoded.tick, { players: decoded.players, loot: decoded.loot });
+    this.loot = decoded.loot;
     this.trimSnapshots(decoded.tick);
     this.ackTick = decoded.tick;
 
@@ -241,6 +247,7 @@ export class GameClient {
       // What this client is currently drawing other players at. The server
       // rewinds to it so a shot is judged against what the shooter saw.
       renderTick: this.interpolator.renderTick,
+      slot: sample.slot,
     };
 
     this.predictor.applyCommand(cmd, map.world);

@@ -31,6 +31,7 @@ import {
   type InputCommand,
 } from '@br/shared';
 import { World } from '../server/src/World.js';
+import { giveWeapon } from '../server/src/Loot.js';
 
 const SEED = 0xc0ffee;
 
@@ -41,11 +42,12 @@ function fireCommand(seq: number, yaw: number, pitch: number, renderTick: number
     yawQ: quantizeYaw(yaw),
     pitchQ: quantizePitch(pitch),
     renderTick,
+    slot: 0,
   };
 }
 
 function idle(seq: number): InputCommand {
-  return { seq, buttons: 0, yawQ: quantizeYaw(0), pitchQ: 0, renderTick: 0 };
+  return { seq, buttons: 0, yawQ: quantizeYaw(0), pitchQ: 0, renderTick: 0, slot: 0 };
 }
 
 describe('weapons', () => {
@@ -227,8 +229,8 @@ describe('server-side shooting', () => {
     target.state.pos.x = 0;
     target.state.pos.y = GROUND_Y;
     target.state.pos.z = -10;
-    shooter.state.weapon = packWeapon(WeaponClass.Rifle, Rarity.Grey);
-    shooter.state.ammo = weaponStats(WeaponClass.Rifle).magazine;
+    // Inventory is the source of truth for what is in hand.
+    giveWeapon(shooter.state, WeaponClass.Rifle, Rarity.Grey, 0);
     return { world, shooter, target };
   }
 
@@ -285,8 +287,7 @@ describe('server-side shooting', () => {
 
   it('makes a semi-automatic wait for the trigger to be released', () => {
     const { world, shooter, target } = twoPlayers();
-    shooter.state.weapon = packWeapon(WeaponClass.Pistol, Rarity.Grey);
-    shooter.state.ammo = weaponStats(WeaponClass.Pistol).magazine;
+    giveWeapon(shooter.state, WeaponClass.Pistol, Rarity.Grey, 0);
     const pitch = aimAt(0, -10);
 
     // Hold the trigger down for far longer than the fire interval.
@@ -301,6 +302,7 @@ describe('server-side shooting', () => {
   it('reloads automatically once the magazine runs dry', () => {
     const { world, shooter } = twoPlayers();
     const stats = weaponStats(WeaponClass.Rifle);
+    shooter.state.inventory[0]!.count = 1;
     shooter.state.ammo = 1;
 
     shooter.enqueue([fireCommand(1, 0, aimAt(0, -10), 0)]);
@@ -350,8 +352,7 @@ describe('lag compensation', () => {
     shooter.state.pos.x = 0;
     shooter.state.pos.y = GROUND_Y;
     shooter.state.pos.z = 0;
-    shooter.state.weapon = packWeapon(WeaponClass.Rifle, Rarity.Grey);
-    shooter.state.ammo = weaponStats(WeaponClass.Rifle).magazine;
+    giveWeapon(shooter.state, WeaponClass.Rifle, Rarity.Grey, 0);
 
     target.state.pos.x = 0;
     target.state.pos.y = GROUND_Y;

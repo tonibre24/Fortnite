@@ -85,6 +85,8 @@ export class GameServer {
     this.loop.resetStats();
     this.errors.length = 0;
     this.world.starvationSteps = 0;
+    this.world.pickupCount = 0;
+    this.world.killCount = 0;
     for (const player of this.world.players.values()) player.droppedCommands = 0;
   }
 

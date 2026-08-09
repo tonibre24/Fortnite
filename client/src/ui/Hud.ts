@@ -1,11 +1,19 @@
 import {
   DAMAGE_FLASH_MS,
+  INVENTORY_SLOTS,
+  ItemKind,
+  RARITY_COLORS,
+  RARITY_NAMES,
+  isConsumableKind,
+  isWeaponKind,
+  itemLabel,
   HIT_MARKER_MS,
   KILL_FEED_MAX,
   KILL_FEED_MS,
   PLAYER_MAX_HEALTH,
   PLAYER_MAX_SHIELD,
   weaponLabel,
+  type ItemStack,
 } from '@br/shared';
 import type { ConnectionStatus } from '../net/Connection.js';
 
@@ -39,11 +47,29 @@ export class Hud {
   private readonly indicatorsEl = mustFind('indicators');
   private readonly bannerEl = mustFind('banner');
   private readonly hintEl = mustFind('hint');
+  private readonly inventoryEl = mustFind('inventory');
+  private readonly promptEl = mustFind('prompt');
+  private readonly useBarEl = mustFind('usebar');
+  private readonly useBarFill = mustFind('usebar').querySelector('i') as HTMLElement;
+  private readonly slotEls: HTMLElement[] = [];
+  private inventorySignature = '';
 
   private readonly feed: FeedEntry[] = [];
   private readonly indicators: Indicator[] = [];
   private hitMarkerUntil = 0;
   private damageUntil = 0;
+
+  constructor() {
+    for (let i = 0; i < INVENTORY_SLOTS; i++) {
+      const slot = document.createElement('div');
+      slot.className = 'slot';
+      slot.innerHTML =
+        '<span class="idx"></span><span class="label"></span><span class="qty"></span><span class="tint"></span>';
+      (slot.querySelector('.idx') as HTMLElement).textContent = `${i + 1}`;
+      this.inventoryEl.append(slot);
+      this.slotEls.push(slot);
+    }
+  }
 
   setStatus(status: ConnectionStatus, detail: string): void {
     this.statusEl.className = status;
@@ -89,6 +115,45 @@ export class Hud {
         this.bannerEl.append(span);
       }
     }
+  }
+
+  /** Redraws the five slots, but only when something in them actually changed. */
+  setInventory(inventory: readonly ItemStack[], held: number): void {
+    const signature = `${held}|${inventory.map((s) => `${s.kind}.${s.rarity}.${s.count}`).join(',')}`;
+    if (signature === this.inventorySignature) return;
+    this.inventorySignature = signature;
+
+    for (let i = 0; i < this.slotEls.length; i++) {
+      const el = this.slotEls[i]!;
+      const stack = inventory[i];
+      el.classList.toggle('held', i === held);
+      const label = el.querySelector('.label') as HTMLElement;
+      const qty = el.querySelector('.qty') as HTMLElement;
+      const tint = el.querySelector('.tint') as HTMLElement;
+
+      if (stack === undefined || stack.kind === ItemKind.None) {
+        label.textContent = '';
+        qty.textContent = '';
+        tint.style.background = 'transparent';
+        continue;
+      }
+      label.textContent = isWeaponKind(stack.kind)
+        ? `${RARITY_NAMES[stack.rarity] ?? ''}\n${itemLabel(stack)}`
+        : itemLabel(stack);
+      qty.textContent = isConsumableKind(stack.kind) ? `x${stack.count}` : `${stack.count}`;
+      tint.style.background = `#${(RARITY_COLORS[stack.rarity] ?? RARITY_COLORS[0]).toString(16).padStart(6, '0')}`;
+    }
+  }
+
+  setPrompt(text: string | null): void {
+    this.promptEl.classList.toggle('show', text !== null);
+    if (text !== null) this.promptEl.textContent = text;
+  }
+
+  /** Progress bar while a medkit or potion is being drunk. `progress` is 0..1. */
+  setUseProgress(progress: number): void {
+    this.useBarEl.classList.toggle('show', progress > 0);
+    this.useBarFill.style.width = `${Math.min(1, progress) * 100}%`;
   }
 
   showHitMarker(now: number, killed: boolean): void {

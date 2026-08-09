@@ -25,6 +25,16 @@ const KEY_BUTTONS: Record<string, number> = {
   ControlLeft: Button.Crouch,
   KeyC: Button.Crouch,
   KeyR: Button.Reload,
+  KeyE: Button.Interact,
+};
+
+/** Number keys pick the slot in hand. */
+const SLOT_KEYS: Record<string, number> = {
+  Digit1: 0,
+  Digit2: 1,
+  Digit3: 2,
+  Digit4: 3,
+  Digit5: 4,
 };
 
 /**
@@ -41,11 +51,22 @@ export class InputSampler implements InputSource {
   private firing = false;
   private yaw = 0;
   private pitch = 0;
+  private slot = 0;
   locked = false;
+
+  /** Whether the trigger is down right now, for local HUD feedback. */
+  get firingNow(): boolean {
+    return this.locked && this.firing;
+  }
 
   constructor(canvas: HTMLCanvasElement) {
     window.addEventListener('keydown', (e) => {
       if (e.code in KEY_BUTTONS) e.preventDefault();
+      const slot = SLOT_KEYS[e.code];
+      if (slot !== undefined) {
+        this.slot = slot;
+        e.preventDefault();
+      }
       this.held.add(e.code);
     });
     window.addEventListener('keyup', (e) => this.held.delete(e.code));
@@ -97,6 +118,7 @@ export class InputSampler implements InputSource {
       buttons,
       yawQ: quantizeYaw(this.yaw),
       pitchQ: quantizePitch(this.pitch),
+      slot: this.slot,
     };
   }
 }

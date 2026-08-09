@@ -141,6 +141,7 @@ function printReport(
   const stale = sum(connected.map((c) => c.client.snapshotsStale));
   const bytes = sum(connected.map((c) => c.bytesIn));
   const mapMismatches = connected.filter((c) => !c.mapHashMatches).length;
+  const lootTaken = server.world.pickupCount;
   const droppedCommands = sum(
     [...server.world.players.values()].map((p) => p.droppedCommands),
   );
@@ -174,6 +175,9 @@ function printReport(
   console.log(`  shots fired      ${shots}`);
   console.log(`  hits landed      ${hits} (${percent(hits, shots)} of shots)`);
   console.log(`  eliminations     ${server.world.killCount}`);
+  console.log(
+    `  loot             ${server.world.pickupCount} picked up, ${server.world.loot.items.size} left on the ground`,
+  );
   console.log(`  still alive      ${survivors}/${connected.length}`);
   console.log('');
 
@@ -214,6 +218,7 @@ function printReport(
   if (reconciles === 0) problems.push('no reconciliations happened — clients never received state');
   if (shots === 0) problems.push('nobody fired a shot — combat never engaged');
   if (hits === 0) problems.push('no shot ever connected — hit detection or lag compensation is broken');
+  if (lootTaken <= 0) problems.push('no loot was ever picked up');
   // With no packet loss the prediction must reproduce the server exactly, so
   // any correction at all means the two simulations diverged.
   if (droppedCommands > 0) problems.push(`${droppedCommands} input commands dropped by the server`);

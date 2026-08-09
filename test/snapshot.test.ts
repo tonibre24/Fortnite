@@ -8,6 +8,7 @@ import {
   decodeSnapshot,
   encodeInput,
   encodeSnapshot,
+  type ClientBaseline,
   type PlayerState,
 } from '@br/shared';
 
@@ -30,6 +31,11 @@ function snapshot(players: PlayerState[]): Map<number, PlayerState> {
 }
 
 const noBaseline = (): null => null;
+
+/** Wraps a decoded player map as the baseline shape the decoder expects. */
+function asBaseline(players: ReadonlyMap<number, PlayerState>): ClientBaseline {
+  return { players, loot: new Map() };
+}
 
 describe('snapshot encoding', () => {
   it('round-trips a full snapshot', () => {
@@ -54,32 +60,33 @@ describe('snapshot encoding', () => {
 
   it('carries unchanged players forward without sending them', () => {
     const first = snapshot([player(1, 10), player(2, -20)]);
-    const baseline = { tick: 1, players: first };
+    const baseline = { tick: 1, players: first, lootIds: new Set<number>() };
 
     const second = snapshot([player(1, 11), clonePlayerState(first.get(2)!)]);
     const delta = encodeSnapshot(2, second, baseline, 1, 5);
     const full = encodeSnapshot(2, second, null, 1, 5);
     expect(delta.byteLength).toBeLessThan(full.byteLength);
 
-    const decoded = decodeSnapshot(delta, (tick) => (tick === 1 ? first : null))!;
+    const decoded = decodeSnapshot(delta, (tick) => (tick === 1 ? asBaseline(first) : null))!;
     expect(decoded.players.get(1)!.pos.x).toBe(11);
     expect(decoded.players.get(2)!.pos.x).toBe(-20);
   });
 
   it('sends nothing but headers when nobody moved', () => {
     const state = snapshot([player(1, 10), player(2, -20)]);
-    const baseline = { tick: 1, players: state };
+    const baseline = { tick: 1, players: state, lootIds: new Set<number>() };
     const delta = encodeSnapshot(2, state, baseline, 1, 5);
-    // type + tick + flags + baseline + seq + removedCount + playerCount + eventCount
-    expect(delta.byteLength).toBe(1 + 4 + 1 + 4 + 4 + 1 + 2 + 1);
+    // type + tick + flags + baseline + seq + removedPlayers + playerCount
+    // + removedLoot + addedLoot + eventCount
+    expect(delta.byteLength).toBe(1 + 4 + 1 + 4 + 4 + 1 + 2 + 2 + 2 + 1);
   });
 
   it('removes players that left', () => {
     const first = snapshot([player(1, 10), player(2, -20)]);
     const second = snapshot([first.get(1)!]);
     const decoded = decodeSnapshot(
-      encodeSnapshot(2, second, { tick: 1, players: first }, 1, 0),
-      (tick) => (tick === 1 ? first : null),
+      encodeSnapshot(2, second, { tick: 1, players: first, lootIds: new Set<number>() }, 1, 0),
+      (tick) => (tick === 1 ? asBaseline(first) : null),
     )!;
     expect([...decoded.players.keys()]).toEqual([1]);
   });
@@ -87,7 +94,7 @@ describe('snapshot encoding', () => {
   it('reports failure when the baseline is gone instead of decoding garbage', () => {
     const first = snapshot([player(1, 10)]);
     const second = snapshot([player(1, 11)]);
-    const delta = encodeSnapshot(2, second, { tick: 1, players: first }, 1, 0);
+    const delta = encodeSnapshot(2, second, { tick: 1, players: first, lootIds: new Set<number>() }, 1, 0);
     expect(decodeSnapshot(delta, noBaseline)).toBeNull();
   });
 
@@ -97,8 +104,8 @@ describe('snapshot encoding', () => {
 
     const second = snapshot([player(1, 99)]);
     const decodedSecond = decodeSnapshot(
-      encodeSnapshot(2, second, { tick: 1, players: first }, 1, 0),
-      () => decodedFirst.players,
+      encodeSnapshot(2, second, { tick: 1, players: first, lootIds: new Set<number>() }, 1, 0),
+      () => asBaseline(decodedFirst.players),
     )!;
 
     expect(decodedSecond.players.get(1)!.pos.x).toBe(99);
@@ -110,8 +117,8 @@ describe('snapshot encoding', () => {
     const first = snapshot([player(1, 10)]);
     const second = snapshot([first.get(1)!, player(2, 5, 6, 7)]);
     const decoded = decodeSnapshot(
-      encodeSnapshot(2, second, { tick: 1, players: first }, 1, 0),
-      (tick) => (tick === 1 ? first : null),
+      encodeSnapshot(2, second, { tick: 1, players: first, lootIds: new Set<number>() }, 1, 0),
+      (tick) => (tick === 1 ? asBaseline(first) : null),
     )!;
     const joined = decoded.players.get(2)!;
     expect(joined.pos).toEqual({ x: 5, y: 6, z: 7 });
@@ -123,31 +130,31 @@ describe('snapshot encoding', () => {
   it('exposes distinct bits for every replicated field', () => {
     const bits = Object.values(Field);
     expect(new Set(bits).size).toBe(bits.length);
-    // The mask is written as a u16.
-    expect(Math.max(...bits)).toBeLessThan(1 << 16);
+    // The mask is written as a u32.
+    expect(Math.max(...bits)).toBeLessThan(2 ** 32);
   });
 });
 
 describe('input encoding', () => {
   it('round-trips a batch with implied consecutive sequence numbers', () => {
     const commands = [
-      { seq: 100, buttons: 3, yawQ: 1234, pitchQ: -30000, renderTick: 0 },
-      { seq: 101, buttons: 0, yawQ: 5, pitchQ: 6, renderTick: 0 },
-      { seq: 102, buttons: 511, yawQ: 65535, pitchQ: 32767, renderTick: 0 },
+      { seq: 100, buttons: 3, yawQ: 1234, pitchQ: -30000, renderTick: 0, slot: 0 },
+      { seq: 101, buttons: 0, yawQ: 5, pitchQ: 6, renderTick: 0, slot: 0 },
+      { seq: 102, buttons: 511, yawQ: 65535, pitchQ: 32767, renderTick: 0, slot: 0 },
     ];
     const msg = decodeClientMessage(encodeInput(commands, 77));
     expect(msg).toEqual({ type: MsgType.Input, ackTick: 77, commands });
   });
 
-  it('costs five bytes per extra command', () => {
-    const one = encodeInput([{ seq: 1, buttons: 0, yawQ: 0, pitchQ: 0, renderTick: 0 }], 0).byteLength;
+  it('costs a fixed few bytes per extra command', () => {
+    const one = encodeInput([{ seq: 1, buttons: 0, yawQ: 0, pitchQ: 0, renderTick: 0, slot: 0 }], 0).byteLength;
     const two = encodeInput(
       [
-        { seq: 1, buttons: 0, yawQ: 0, pitchQ: 0, renderTick: 0 },
-        { seq: 2, buttons: 0, yawQ: 0, pitchQ: 0, renderTick: 0 },
+        { seq: 1, buttons: 0, yawQ: 0, pitchQ: 0, renderTick: 0, slot: 0 },
+        { seq: 2, buttons: 0, yawQ: 0, pitchQ: 0, renderTick: 0, slot: 0 },
       ],
       0,
     ).byteLength;
-    expect(two - one).toBe(6);
+    expect(two - one).toBe(7);
   });
 });

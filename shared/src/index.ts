@@ -7,5 +7,6 @@ export * from './collision.js';
 export * from './map.js';
 export * from './movement.js';
 export * from './weapons.js';
+export * from './items.js';
 export * from './combat.js';
 export * from './protocol.js';

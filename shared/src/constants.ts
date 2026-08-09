@@ -230,6 +230,40 @@ export const KILL_FEED_MS = 6000;
 /** Damage indicator arc lifetime. */
 export const DAMAGE_FLASH_MS = 400;
 
+// -------------------------------------------------------------------- loot
+
+export const INVENTORY_SLOTS = 5;
+/** How close you must be to pick something up. */
+export const PICKUP_RANGE = 2.6;
+/** Ground items bob and spin; this is the vertical amplitude. */
+export const LOOT_BOB_HEIGHT = 0.12;
+export const LOOT_SIZE = 0.42;
+export const CHEST_SIZE = 0.9;
+export const CHEST_HEIGHT = 0.7;
+
+/** Floor loot per building, and the chance a building also gets a chest. */
+export const FLOOR_LOOT_MIN = 1;
+export const FLOOR_LOOT_MAX = 3;
+export const CHEST_CHANCE = 0.55;
+/** Items a chest coughs up when opened. */
+export const CHEST_ITEMS_MIN = 2;
+export const CHEST_ITEMS_MAX = 3;
+/** How far opened-chest loot scatters. */
+export const CHEST_SCATTER = 1.3;
+
+/** Rarity weights for floor loot and for chests. Chests skew better. */
+export const FLOOR_RARITY_WEIGHTS = [46, 27, 16, 8, 3] as const;
+export const CHEST_RARITY_WEIGHTS = [18, 26, 27, 19, 10] as const;
+/** Share of loot rolls that produce a consumable rather than a gun. */
+export const CONSUMABLE_CHANCE = 0.34;
+
+export const MEDKIT_HEAL = 100;
+export const MEDKIT_USE_TICKS = 60;
+export const MEDKIT_STACK = 3;
+export const SHIELD_POTION_GAIN = 50;
+export const SHIELD_POTION_USE_TICKS = 40;
+export const SHIELD_POTION_STACK = 3;
+
 // ------------------------------------------------------------------ gameplay
 
 export const MAX_PLAYERS = 20;

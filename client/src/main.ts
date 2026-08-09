@@ -2,7 +2,13 @@ import './style.css';
 import {
   DEFAULT_PORT,
   EventType,
+  ItemKind,
+  MEDKIT_USE_TICKS,
+  PICKUP_RANGE,
   PLAYER_EYE_HEIGHT,
+  SHIELD_POTION_USE_TICKS,
+  isConsumableKind,
+  itemLabel,
   dequantizePitch,
   dequantizeYaw,
   unpackWeapon,
@@ -15,6 +21,7 @@ import { GameClient } from './game/GameClient.js';
 import { InputSampler } from './input/InputSampler.js';
 import { PlayerView } from './render/PlayerView.js';
 import { Renderer } from './render/Renderer.js';
+import { LootView } from './render/LootView.js';
 import { Tracers } from './render/Tracers.js';
 import { WorldView } from './render/WorldView.js';
 import { Hud } from './ui/Hud.js';
@@ -35,6 +42,7 @@ const hud = new Hud();
 const input = new InputSampler(canvas);
 const playerView = new PlayerView(renderer.scene);
 const tracers = new Tracers(renderer.scene);
+const lootView = new LootView(renderer.scene);
 
 const client = new GameClient({
   url: resolveServerUrl(),
@@ -47,7 +55,30 @@ client.connect();
 let worldView: WorldView | null = null;
 /** Who the camera follows once the local player is out of the round. */
 let spectating = 0;
+/** Ticks the local player has held fire on a consumable, for the use bar. */
+let useTicks = 0;
 const eye = vec3();
+
+/** The nearest item within reach, which is what E would take. */
+function itemInReach(): { label: string; chest: boolean } | null {
+  if (!client.alive) return null;
+  const p = client.predictor.state.pos;
+  let best: { label: string; chest: boolean } | null = null;
+  let bestDistSq = PICKUP_RANGE * PICKUP_RANGE;
+  for (const item of client.loot.values()) {
+    const dx = item.x - p.x;
+    const dy = item.y - p.y;
+    const dz = item.z - p.z;
+    const distSq = dx * dx + dy * dy + dz * dz;
+    if (distSq >= bestDistSq) continue;
+    bestDistSq = distSq;
+    best =
+      item.kind === ItemKind.Chest
+        ? { label: 'chest', chest: true }
+        : { label: itemLabel(item), chest: false };
+  }
+  return best;
+}
 
 function nameOf(id: number): string {
   if (id === 0) return 'the storm';
@@ -118,6 +149,7 @@ function buildStats(): string[] {
     `kills    ${p.state.kills}`,
     `pos      ${p.state.pos.x.toFixed(1)} ${p.state.pos.y.toFixed(1)} ${p.state.pos.z.toFixed(1)}`,
     `pred err ${p.lastError.toFixed(4)} (max ${p.maxError.toFixed(3)})`,
+    `loot     ${client.loot.size}`,
     `map      ${client.mapHashMatches ? 'ok' : 'MISMATCH'}`,
   ];
 }
@@ -138,6 +170,22 @@ function frame(): void {
 
     const state = client.predictor.state;
     const weapon = unpackWeapon(state.weapon);
+    const held = state.inventory[state.slot];
+
+    // The use bar is a local guess at the server's timer; the effect itself is
+    // still entirely server-side.
+    if (held !== undefined && isConsumableKind(held.kind) && input.firingNow && client.alive) {
+      useTicks += 1;
+    } else {
+      useTicks = 0;
+    }
+    const useNeeded =
+      held !== undefined && held.kind === ItemKind.Medkit ? MEDKIT_USE_TICKS : SHIELD_POTION_USE_TICKS;
+    hud.setUseProgress(useTicks === 0 ? 0 : useTicks / useNeeded);
+
+    hud.setInventory(state.inventory, state.slot);
+    const reach = itemInReach();
+    hud.setPrompt(reach === null ? null : `E — ${reach.chest ? 'open chest' : `pick up ${reach.label}`}`);
     hud.setVitals(state.health, state.shield);
     hud.setWeapon(state.weapon, state.ammo, weapon === null ? 0 : weaponStats(weapon.cls).magazine, state.reload);
     hud.setCrosshairVisible(client.alive && input.locked);
@@ -145,9 +193,14 @@ function frame(): void {
       client.alive ? null : 'eliminated',
       client.alive ? '' : `spectating ${nameOf(spectating)} · ${client.playerCount - 1} still in`,
     );
-    hud.setHint(input.locked ? null : 'click to capture the mouse — WASD move, shift sprint, space jump, R reload');
+    hud.setHint(
+      input.locked
+        ? null
+        : 'click to capture the mouse — WASD move, shift sprint, space jump, R reload, E pick up, 1-5 slots',
+    );
   }
 
+  lootView.update(client.loot, now);
   tracers.update(now);
   tracers.flush();
   hud.update(now, dequantizeYaw(client.predictor.state.yawQ));

@@ -1,5 +1,6 @@
 import { BinaryReader, BinaryWriter } from './binary.js';
 import { PROTOCOL_VERSION, RENDER_TICK_SCALE, TICK_RATE } from './constants.js';
+import type { ItemStack } from './items.js';
 import { Button, createPlayerState, type InputCommand, type PlayerState } from './types.js';
 
 /** Message type tags. Client messages are < 0x80, server messages >= 0x80. */
@@ -81,6 +82,7 @@ export function encodeInput(commands: readonly InputCommand[], ackTick: number):
     w.u16(cmd.buttons);
     w.u16(cmd.yawQ);
     w.i16(cmd.pitchQ);
+    w.u8(cmd.slot);
     // The rewind time only matters for a shot, so only a shot pays for it.
     if ((cmd.buttons & Button.Fire) !== 0) {
       w.u32(Math.max(0, Math.round(cmd.renderTick * RENDER_TICK_SCALE)));
@@ -176,6 +178,8 @@ export const Field = {
   Ammo: 1 << 13,
   Reload: 1 << 14,
   Kills: 1 << 15,
+  Inventory: 1 << 16,
+  Slot: 1 << 17,
 } as const;
 
 /**
@@ -183,13 +187,39 @@ export const Field = {
  * which gun you are holding; nobody else needs your magazine count, and your
  * velocity is only useful to the client predicting you.
  */
-const SELF_ONLY_FIELDS = Field.VelX | Field.VelY | Field.VelZ | Field.Ammo | Field.Reload;
+const SELF_ONLY_FIELDS =
+  Field.VelX | Field.VelY | Field.VelZ | Field.Ammo | Field.Reload | Field.Inventory | Field.Slot;
 
 const SNAPSHOT_FLAG_DELTA = 1 << 0;
+
+const EMPTY_LOOT: ReadonlyMap<number, LootItem> = new Map();
+
+/** One thing lying in the world, with the id the server tracks it by. */
+export interface LootItem {
+  id: number;
+  x: number;
+  y: number;
+  z: number;
+  kind: number;
+  rarity: number;
+  count: number;
+}
 
 export interface SnapshotBaseline {
   tick: number;
   players: ReadonlyMap<number, PlayerState>;
+  /**
+   * Which loot existed at this tick. Items never change once spawned, so the
+   * delta only ever needs to say what appeared and what was taken - the same
+   * trick the player list uses, against the same acknowledged baseline.
+   */
+  lootIds: ReadonlySet<number>;
+}
+
+/** What a client keeps for a decoded tick so it can serve as a baseline. */
+export interface ClientBaseline {
+  players: ReadonlyMap<number, PlayerState>;
+  loot: ReadonlyMap<number, LootItem>;
 }
 
 /**
@@ -321,6 +351,7 @@ export interface DecodedSnapshot {
   tick: number;
   lastProcessedSeq: number;
   players: Map<number, PlayerState>;
+  loot: Map<number, LootItem>;
   events: GameEvent[];
 }
 
@@ -336,6 +367,7 @@ export function encodeSnapshot(
   selfId: number,
   lastProcessedSeq: number,
   events: readonly GameEvent[] = [],
+  loot: ReadonlyMap<number, LootItem> = EMPTY_LOOT,
 ): ArrayBuffer {
   const w = new BinaryWriter(64 + players.size * 40);
   w.u8(MsgType.Snapshot);
@@ -385,6 +417,40 @@ export function encodeSnapshot(
     if ((mask & Field.Ammo) !== 0) w.u8(state.ammo);
     if ((mask & Field.Reload) !== 0) w.u8(state.reload);
     if ((mask & Field.Kills) !== 0) w.u8(state.kills);
+    if ((mask & Field.Inventory) !== 0) {
+      for (const stack of state.inventory) {
+        w.u8(stack.kind);
+        w.u8(stack.rarity);
+        w.u8(stack.count);
+      }
+    }
+    if ((mask & Field.Slot) !== 0) w.u8(state.slot);
+  }
+
+  // Loot: what the baseline had and we no longer do, then what is new.
+  const removedLoot: number[] = [];
+  if (baseline !== null) {
+    for (const id of baseline.lootIds) {
+      if (!loot.has(id)) removedLoot.push(id);
+    }
+  }
+  w.u16(removedLoot.length);
+  for (const id of removedLoot) w.u16(id);
+
+  const addedLoot: LootItem[] = [];
+  for (const [id, item] of loot) {
+    if (baseline !== null && baseline.lootIds.has(id)) continue;
+    addedLoot.push(item);
+  }
+  w.u16(addedLoot.length);
+  for (const item of addedLoot) {
+    w.u16(item.id);
+    w.f32(item.x);
+    w.f32(item.y);
+    w.f32(item.z);
+    w.u8(item.kind);
+    w.u8(item.rarity);
+    w.u8(item.count);
   }
 
   // Events are never delta-compressed: they describe an instant, not a state,
@@ -413,8 +479,19 @@ function fullMask(isSelf: boolean): number {
     Field.Weapon |
     Field.Ammo |
     Field.Reload |
-    Field.Kills;
+    Field.Kills |
+    Field.Inventory |
+    Field.Slot;
   return isSelf ? all : all & ~SELF_ONLY_FIELDS;
+}
+
+function inventoryDiffers(a: readonly ItemStack[], b: readonly ItemStack[]): boolean {
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i]!;
+    const y = b[i]!;
+    if (x.kind !== y.kind || x.rarity !== y.rarity || x.count !== y.count) return true;
+  }
+  return false;
 }
 
 function diffMask(next: PlayerState, prev: PlayerState, isSelf: boolean): number {
@@ -439,6 +516,10 @@ function diffMask(next: PlayerState, prev: PlayerState, isSelf: boolean): number
     if (next.reload !== prev.reload) mask |= Field.Reload;
   }
   if (next.kills !== prev.kills) mask |= Field.Kills;
+  if (isSelf) {
+    if (inventoryDiffers(next.inventory, prev.inventory)) mask |= Field.Inventory;
+    if (next.slot !== prev.slot) mask |= Field.Slot;
+  }
   return mask;
 }
 
@@ -464,7 +545,7 @@ export function peekSnapshotTick(buffer: ArrayBuffer | Uint8Array): number | nul
  */
 export function decodeSnapshot(
   buffer: ArrayBuffer | Uint8Array,
-  lookupBaseline: (tick: number) => ReadonlyMap<number, PlayerState> | null,
+  lookupBaseline: (tick: number) => ClientBaseline | null,
 ): DecodedSnapshot | null {
   try {
     const r = new BinaryReader(buffer);
@@ -474,7 +555,7 @@ export function decodeSnapshot(
     const baselineTick = r.u32();
     const lastProcessedSeq = r.u32();
 
-    let baseline: ReadonlyMap<number, PlayerState> | null = null;
+    let baseline: ClientBaseline | null = null;
     if ((flags & SNAPSHOT_FLAG_DELTA) !== 0) {
       baseline = lookupBaseline(baselineTick);
       if (baseline === null) return null;
@@ -484,7 +565,7 @@ export function decodeSnapshot(
     // changed. Every entry is cloned so stored snapshots never alias each other.
     const players = new Map<number, PlayerState>();
     if (baseline !== null) {
-      for (const [id, state] of baseline) players.set(id, clonePlayer(state, id));
+      for (const [id, state] of baseline.players) players.set(id, clonePlayer(state, id));
     }
 
     const removedCount = r.u8();
@@ -513,8 +594,36 @@ export function decodeSnapshot(
       if ((mask & Field.Ammo) !== 0) state.ammo = r.u8();
       if ((mask & Field.Reload) !== 0) state.reload = r.u8();
       if ((mask & Field.Kills) !== 0) state.kills = r.u8();
+      if ((mask & Field.Inventory) !== 0) {
+        for (const stack of state.inventory) {
+          stack.kind = r.u8();
+          stack.rarity = r.u8();
+          stack.count = r.u8();
+        }
+      }
+      if ((mask & Field.Slot) !== 0) state.slot = r.u8();
 
       players.set(id, state);
+    }
+
+    const loot = new Map<number, LootItem>();
+    if (baseline !== null) {
+      for (const [id, item] of baseline.loot) loot.set(id, item);
+    }
+    const removedLoot = r.u16();
+    for (let i = 0; i < removedLoot; i++) loot.delete(r.u16());
+    const addedLoot = r.u16();
+    for (let i = 0; i < addedLoot; i++) {
+      const item: LootItem = {
+        id: r.u16(),
+        x: r.f32(),
+        y: r.f32(),
+        z: r.f32(),
+        kind: r.u8(),
+        rarity: r.u8(),
+        count: r.u8(),
+      };
+      loot.set(item.id, item);
     }
 
     const events: GameEvent[] = [];
@@ -525,7 +634,7 @@ export function decodeSnapshot(
       events.push(event);
     }
 
-    return { tick, lastProcessedSeq, players, events };
+    return { tick, lastProcessedSeq, players, loot, events };
   } catch {
     return null;
   }
@@ -549,6 +658,11 @@ function clonePlayer(src: PlayerState, id: number): PlayerState {
   out.ammo = src.ammo;
   out.reload = src.reload;
   out.kills = src.kills;
+  for (let i = 0; i < out.inventory.length; i++) {
+    const from = src.inventory[i]!;
+    out.inventory[i] = { kind: from.kind, rarity: from.rarity, count: from.count };
+  }
+  out.slot = src.slot;
   return out;
 }
 
@@ -573,9 +687,10 @@ export function decodeClientMessage(buffer: ArrayBuffer | Uint8Array): ClientMes
           const buttons = r.u16();
           const yawQ = r.u16();
           const pitchQ = r.i16();
+          const slot = r.u8();
           const renderTick =
             (buttons & Button.Fire) !== 0 ? r.u32() / RENDER_TICK_SCALE : 0;
-          commands.push({ seq: baseSeq + i, buttons, yawQ, pitchQ, renderTick });
+          commands.push({ seq: baseSeq + i, buttons, yawQ, pitchQ, renderTick, slot });
         }
         return { type: MsgType.Input, ackTick, commands };
       }

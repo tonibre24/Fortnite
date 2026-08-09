@@ -41,7 +41,7 @@ class FakeSocket implements SocketLike {
 class HeldInput implements InputSource {
   constructor(private readonly buttons: number) {}
   sample(): InputSample {
-    return { buttons: this.buttons, yawQ: quantizeYaw(0), pitchQ: 0 };
+    return { buttons: this.buttons, yawQ: quantizeYaw(0), pitchQ: 0, slot: 0 };
   }
 }
 

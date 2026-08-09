@@ -1,6 +1,12 @@
 import {
+  Button,
   EventType,
   INPUT_STARVE_GRACE_TICKS,
+  INVENTORY_SLOTS,
+  ItemKind,
+  MEDKIT_USE_TICKS,
+  Rng,
+  SHIELD_POTION_USE_TICKS,
   SNAPSHOT_HISTORY,
   StateFlag,
   TICK_DT,
@@ -9,17 +15,26 @@ import {
   generateMap,
   hashMap,
   idleCommand,
+  isConsumableKind,
   lerp,
-  packWeapon,
   stepMovement,
-  weaponStats,
   type GameEvent,
   type GameMap,
+  type InputCommand,
   type PlayerState,
   type SnapshotBaseline,
   type Vec3,
 } from '@br/shared';
 import { resolveWeapon } from './Combat.js';
+import {
+  LootField,
+  consume,
+  dropInventory,
+  giveWeapon,
+  syncAmmoToSlot,
+  syncHeldWeapon,
+  tryPickup,
+} from './Loot.js';
 import { ServerPlayer } from './ServerPlayer.js';
 
 /** An event plus who is allowed to see it; zero means everyone. */
@@ -31,6 +46,8 @@ interface AddressedEvent {
 interface HistoryEntry {
   tick: number;
   players: Map<number, PlayerState>;
+  /** Which loot existed, so the snapshot delta can say what changed. */
+  lootIds: Set<number>;
 }
 
 /**
@@ -42,6 +59,7 @@ export class World {
   /** Sent in the welcome packet so clients can prove they built the same map. */
   readonly mapHash: number;
   readonly players = new Map<number, ServerPlayer>();
+  readonly loot: LootField;
   tick = 0;
 
   /**
@@ -52,6 +70,8 @@ export class World {
   starvationSteps = 0;
   /** Kills resolved so far, for the sim report. */
   killCount = 0;
+  /** Successful pickups and chest opens, for the sim report. */
+  pickupCount = 0;
 
   private readonly history: HistoryEntry[] = [];
   private readonly events: AddressedEvent[] = [];
@@ -60,8 +80,11 @@ export class World {
   constructor(seed: number) {
     this.map = generateMap(seed);
     this.mapHash = hashMap(this.map);
+    // Loot rolls from its own stream so that adding or removing a roll cannot
+    // shift the map geometry the client also generates.
+    this.loot = new LootField(this.map, new Rng(seed ^ 0x10077));
     for (let i = 0; i < SNAPSHOT_HISTORY; i++) {
-      this.history.push({ tick: -1, players: new Map() });
+      this.history.push({ tick: -1, players: new Map(), lootIds: new Set() });
     }
   }
 
@@ -83,9 +106,7 @@ export class World {
    * four replaces this with what they pick up.
    */
   private equipStarterWeapon(player: ServerPlayer): void {
-    const cls = player.id % 4;
-    player.state.weapon = packWeapon(cls, 0);
-    player.state.ammo = weaponStats(cls).magazine;
+    giveWeapon(player.state, player.id % 4, 0, 0);
   }
 
   /** Queues an event for delivery with this tick's snapshots. */
@@ -148,6 +169,8 @@ export class World {
     victim.state.reload = 0;
     victim.diedAtTick = this.tick;
     victim.killedBy = killer?.id ?? 0;
+    // Everything they were carrying is up for grabs.
+    dropInventory(this.loot, victim.state);
     if (killer !== null && killer !== victim) killer.state.kills += 1;
     this.killCount += 1;
 
@@ -168,6 +191,50 @@ export class World {
       if ((p.state.flags & StateFlag.Alive) !== 0) alive += 1;
     }
     return alive;
+  }
+
+  /**
+   * Slot selection, picking things up, and using a consumable. Runs before the
+   * weapon so a switch takes effect on the same command that requested it.
+   */
+  private resolveInventory(player: ServerPlayer, cmd: InputCommand): void {
+    const state = player.state;
+    if ((state.flags & StateFlag.Alive) === 0) return;
+
+    if (cmd.slot < INVENTORY_SLOTS && cmd.slot !== state.slot) {
+      state.slot = cmd.slot;
+      // Switching weapons interrupts a reload and re-arms a semi-automatic.
+      state.reload = 0;
+      player.useTicks = 0;
+      player.triggerHeld = true;
+    }
+    syncHeldWeapon(state);
+
+    const interact = (cmd.buttons & Button.Interact) !== 0;
+    if (interact && !player.interactHeld && tryPickup(this.loot, state) !== 0) {
+      this.pickupCount += 1;
+    }
+    player.interactHeld = interact;
+
+    const held = state.inventory[state.slot]!;
+    if (!isConsumableKind(held.kind)) {
+      player.useTicks = 0;
+      return;
+    }
+
+    // Consumables are used by holding fire, which is why they never reach the
+    // weapon code below.
+    if ((cmd.buttons & Button.Fire) === 0) {
+      player.useTicks = 0;
+      return;
+    }
+    player.useTicks += 1;
+    const needed = held.kind === ItemKind.Medkit ? MEDKIT_USE_TICKS : SHIELD_POTION_USE_TICKS;
+    if (player.useTicks >= needed) {
+      consume(state, state.slot);
+      player.useTicks = 0;
+      syncHeldWeapon(state);
+    }
   }
 
   /** Advances the simulation by exactly one tick and records the result. */
@@ -199,7 +266,12 @@ export class World {
       // mid-air; the client corrects itself when it comes back.
       player.starvedTicks += 1;
       if (player.starvedTicks > INPUT_STARVE_GRACE_TICKS) {
-        const cmd = idleCommand(player.lastProcessedSeq, player.state.yawQ, player.state.pitchQ);
+        const cmd = idleCommand(
+          player.lastProcessedSeq,
+          player.state.yawQ,
+          player.state.pitchQ,
+          player.state.slot,
+        );
         stepMovement(player.state, cmd, this.map.world, TICK_DT);
         player.resolvedCommands.push(cmd);
         this.starvationSteps += 1;
@@ -212,7 +284,11 @@ export class World {
     this.record();
 
     for (const player of this.players.values()) {
-      for (const cmd of player.resolvedCommands) resolveWeapon(this, player, cmd);
+      for (const cmd of player.resolvedCommands) {
+        this.resolveInventory(player, cmd);
+        resolveWeapon(this, player, cmd);
+        syncAmmoToSlot(player.state);
+      }
       player.resolvedCommands.length = 0;
     }
   }
@@ -224,9 +300,12 @@ export class World {
     for (const [id, player] of this.players) {
       entry.players.set(id, clonePlayerState(player.state));
     }
+    entry.lootIds.clear();
+    for (const id of this.loot.items.keys()) entry.lootIds.add(id);
   }
 
   /** The recorded state at `tick`, or null once it has aged out of the ring. */
+  /** Ticks a player has spent using the consumable in hand, for the HUD. */
   baselineAt(tick: number): SnapshotBaseline | null {
     if (tick <= 0) return null;
     const entry = this.history[tick % SNAPSHOT_HISTORY]!;
@@ -257,6 +336,7 @@ export class World {
       player.id,
       player.lastProcessedSeq,
       this.visibleEvents,
+      this.loot.items,
     );
   }
 }

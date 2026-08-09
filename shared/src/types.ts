@@ -1,4 +1,5 @@
 import { PLAYER_MAX_HEALTH } from './constants.js';
+import { copyStack, createInventory, type ItemStack } from './items.js';
 import type { Vec3 } from './math.js';
 
 /** Bitfield of held actions, packed into two bytes of every input command. */
@@ -12,6 +13,7 @@ export const Button = {
   Crouch: 1 << 6,
   Fire: 1 << 7,
   Reload: 1 << 8,
+  Interact: 1 << 9,
 } as const;
 
 export type ButtonName = keyof typeof Button;
@@ -33,6 +35,8 @@ export interface InputCommand {
    * fire; zero otherwise.
    */
   renderTick: number;
+  /** Inventory slot the client wants held. Sent every tick so it cannot be lost. */
+  slot: number;
 }
 
 /** Flags packed into the replicated player flag byte. */
@@ -66,6 +70,10 @@ export interface PlayerState {
   /** Ticks left on a reload, zero when not reloading. */
   reload: number;
   kills: number;
+  /** Five slots of carried items. Only replicated to their owner. */
+  inventory: ItemStack[];
+  /** Which slot is in hand. */
+  slot: number;
 }
 
 export function createPlayerState(id: number): PlayerState {
@@ -83,6 +91,8 @@ export function createPlayerState(id: number): PlayerState {
     ammo: 0,
     reload: 0,
     kills: 0,
+    inventory: createInventory(),
+    slot: 0,
   };
 }
 
@@ -104,6 +114,10 @@ export function copyPlayerState(out: PlayerState, src: PlayerState): PlayerState
   out.ammo = src.ammo;
   out.reload = src.reload;
   out.kills = src.kills;
+  for (let i = 0; i < out.inventory.length; i++) {
+    copyStack(out.inventory[i]!, src.inventory[i]!);
+  }
+  out.slot = src.slot;
   return out;
 }
 

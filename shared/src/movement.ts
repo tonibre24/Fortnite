@@ -190,6 +190,6 @@ function moveHorizontal(
 }
 
 /** Command a disconnected or starved player is simulated with: look, no intent. */
-export function idleCommand(seq: number, yawQ: number, pitchQ: number): InputCommand {
-  return { seq, buttons: 0, yawQ, pitchQ, renderTick: 0 };
+export function idleCommand(seq: number, yawQ: number, pitchQ: number, slot = 0): InputCommand {
+  return { seq, buttons: 0, yawQ, pitchQ, renderTick: 0, slot };
 }
