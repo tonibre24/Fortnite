@@ -147,7 +147,7 @@ export class BenchHarness {
   private readonly scratchOrigin: Vec3 = { x: 0, y: 0, z: 0 };
   private readonly scratchEnd: Vec3 = { x: 0, y: 0, z: 0 };
 
-  private readonly overviewTarget = new Vector3(0, 2, 2);
+  private readonly overviewTarget = new Vector3(0, 1, 1);
   private readonly boundaryTarget = new Vector3(-70, 6, -74);
 
   private simulatedMs = 0;
@@ -267,7 +267,9 @@ export class BenchHarness {
       camera.setTarget(this.boundaryTarget);
       return;
     }
-    camera.position.set(-38, 26, -40);
+    // Inside the rift boundary: outside it the near wall of the ring fills the frame,
+    // which is correct behaviour but useless for looking at the map.
+    camera.position.set(-27, 27, -29);
     camera.setTarget(this.overviewTarget);
   }
 

@@ -11,3 +11,6 @@ npm-debug.log*
 pnpm-debug.log*
 .vite/
 .eslintcache
+
+# Screenshots written by `pnpm bench -- --screenshot`
+.bench-shots/
