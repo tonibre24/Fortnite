@@ -5,6 +5,8 @@ import {
   INVENTORY_SLOTS,
   ItemKind,
   MEDKIT_USE_TICKS,
+  MoveMode,
+  PLAYER_MAX_HEALTH,
   Rng,
   SHIELD_POTION_USE_TICKS,
   SNAPSHOT_HISTORY,
@@ -15,6 +17,8 @@ import {
   generateMap,
   hashMap,
   idleCommand,
+  applyDamage,
+  emptyStack,
   isConsumableKind,
   lerp,
   stepMovement,
@@ -26,6 +30,7 @@ import {
   type Vec3,
 } from '@br/shared';
 import { resolveWeapon } from './Combat.js';
+import { Round } from './Round.js';
 import {
   LootField,
   consume,
@@ -55,12 +60,15 @@ interface HistoryEntry {
  * states used both as delta baselines and (later) for lag-compensated hitscan.
  */
 export class World {
-  readonly map: GameMap;
+  map: GameMap;
   /** Sent in the welcome packet so clients can prove they built the same map. */
-  readonly mapHash: number;
+  mapHash: number;
   readonly players = new Map<number, ServerPlayer>();
-  readonly loot: LootField;
+  loot: LootField;
+  readonly round: Round;
   tick = 0;
+  /** Rounds completed since the server started, for the sim report. */
+  roundsPlayed = 0;
 
   /**
    * Times the server had to simulate a player idle because their input never
@@ -73,6 +81,7 @@ export class World {
   /** Successful pickups and chest opens, for the sim report. */
   pickupCount = 0;
 
+  private readonly seedSource: Rng;
   private readonly history: HistoryEntry[] = [];
   private readonly events: AddressedEvent[] = [];
   private spawnCursor = 0;
@@ -83,6 +92,9 @@ export class World {
     // Loot rolls from its own stream so that adding or removing a roll cannot
     // shift the map geometry the client also generates.
     this.loot = new LootField(this.map, new Rng(seed ^ 0x10077));
+    this.round = new Round(seed);
+    this.round.state.mapHash = this.mapHash;
+    this.seedSource = new Rng(seed ^ 0x9a5eed);
     for (let i = 0; i < SNAPSHOT_HISTORY; i++) {
       this.history.push({ tick: -1, players: new Map(), lootIds: new Set() });
     }
@@ -201,6 +213,15 @@ export class World {
     const state = player.state;
     if ((state.flags & StateFlag.Alive) === 0) return;
 
+    // Nothing to manage while riding, and pressing jump is what gets you off.
+    if (state.mode === MoveMode.Bus) {
+      if ((cmd.buttons & Button.Jump) !== 0) {
+        state.mode = MoveMode.Freefall;
+        player.teleport();
+      }
+      return;
+    }
+
     if (cmd.slot < INVENTORY_SLOTS && cmd.slot !== state.slot) {
       state.slot = cmd.slot;
       // Switching weapons interrupts a reload and re-arms a semi-automatic.
@@ -283,6 +304,12 @@ export class World {
     // first must not decide who wins a trade.
     this.record();
 
+    const nextSeed = this.round.step(this.players, this.aliveCount, () =>
+      this.seedSource.nextUint32(),
+    );
+    this.applyPendingStormDamage();
+    if (nextSeed !== null) this.startNewRound(nextSeed);
+
     for (const player of this.players.values()) {
       for (const cmd of player.resolvedCommands) {
         this.resolveInventory(player, cmd);
@@ -305,6 +332,70 @@ export class World {
   }
 
   /** The recorded state at `tick`, or null once it has aged out of the ring. */
+  /**
+   * Storm damage is applied here rather than inside the round so that a death
+   * it causes goes through the same path as any other, dropping loot and
+   * raising a kill event.
+   */
+  private applyPendingStormDamage(): void {
+    for (const player of this.players.values()) {
+      const amount = player.pendingStormDamage;
+      if (amount <= 0) continue;
+      player.pendingStormDamage = 0;
+      const state = player.state;
+      if ((state.flags & StateFlag.Alive) === 0) continue;
+      const result = applyDamage(state.health, state.shield, amount);
+      state.health = result.health;
+      state.shield = result.shield;
+      if (result.killed) this.killPlayer(player, null);
+    }
+  }
+
+  /** Rebuilds the world on a fresh seed and puts everyone back in the lobby. */
+  private startNewRound(seed: number): void {
+    this.map = generateMap(seed);
+    this.mapHash = hashMap(this.map);
+    this.loot = new LootField(this.map, new Rng(seed ^ 0x10077));
+    this.round.restart(seed, this.mapHash);
+    this.roundsPlayed += 1;
+    this.spawnCursor = 0;
+    for (const player of this.players.values()) this.respawn(player);
+    for (const entry of this.history) {
+      entry.tick = -1;
+      entry.players.clear();
+      entry.lootIds.clear();
+    }
+  }
+
+  /** Puts a player back on the spawn ring, alive and freshly armed. */
+  private respawn(player: ServerPlayer): void {
+    const spawn = this.map.spawns[this.spawnCursor % this.map.spawns.length]!;
+    this.spawnCursor += 1;
+    const state = player.state;
+    state.pos.x = spawn.pos.x;
+    state.pos.y = spawn.pos.y;
+    state.pos.z = spawn.pos.z;
+    state.vel.x = 0;
+    state.vel.y = 0;
+    state.vel.z = 0;
+    state.yawQ = spawn.yawQ;
+    state.pitchQ = 0;
+    state.health = PLAYER_MAX_HEALTH;
+    state.shield = 0;
+    state.kills = 0;
+    state.mode = MoveMode.Ground;
+    state.flags = StateFlag.Alive;
+    state.slot = 0;
+    for (let i = 0; i < state.inventory.length; i++) state.inventory[i] = emptyStack();
+    player.diedAtTick = -1;
+    player.killedBy = 0;
+    player.stormDebt = 0;
+    player.pendingStormDamage = 0;
+    player.useTicks = 0;
+    player.teleport();
+    this.equipStarterWeapon(player);
+  }
+
   /** Ticks a player has spent using the consumable in hand, for the HUD. */
   baselineAt(tick: number): SnapshotBaseline | null {
     if (tick <= 0) return null;
@@ -337,6 +428,7 @@ export class World {
       player.lastProcessedSeq,
       this.visibleEvents,
       this.loot.items,
+      this.round.state,
     );
   }
 }

@@ -1,6 +1,7 @@
 import { BinaryReader, BinaryWriter } from './binary.js';
 import { PROTOCOL_VERSION, RENDER_TICK_SCALE, TICK_RATE } from './constants.js';
 import type { ItemStack } from './items.js';
+import { createRoundState, type RoundState } from './round.js';
 import { Button, createPlayerState, type InputCommand, type PlayerState } from './types.js';
 
 /** Message type tags. Client messages are < 0x80, server messages >= 0x80. */
@@ -180,6 +181,8 @@ export const Field = {
   Kills: 1 << 15,
   Inventory: 1 << 16,
   Slot: 1 << 17,
+  Mode: 1 << 18,
+  Epoch: 1 << 19,
 } as const;
 
 /**
@@ -193,6 +196,7 @@ const SELF_ONLY_FIELDS =
 const SNAPSHOT_FLAG_DELTA = 1 << 0;
 
 const EMPTY_LOOT: ReadonlyMap<number, LootItem> = new Map();
+const DEFAULT_ROUND: RoundState = createRoundState(0);
 
 /** One thing lying in the world, with the id the server tracks it by. */
 export interface LootItem {
@@ -353,6 +357,7 @@ export interface DecodedSnapshot {
   players: Map<number, PlayerState>;
   loot: Map<number, LootItem>;
   events: GameEvent[];
+  round: RoundState;
 }
 
 /**
@@ -368,6 +373,7 @@ export function encodeSnapshot(
   lastProcessedSeq: number,
   events: readonly GameEvent[] = [],
   loot: ReadonlyMap<number, LootItem> = EMPTY_LOOT,
+  round: RoundState = DEFAULT_ROUND,
 ): ArrayBuffer {
   const w = new BinaryWriter(64 + players.size * 40);
   w.u8(MsgType.Snapshot);
@@ -375,6 +381,23 @@ export function encodeSnapshot(
   w.u8(baseline === null ? 0 : SNAPSHOT_FLAG_DELTA);
   w.u32(baseline === null ? 0 : baseline.tick >>> 0);
   w.u32(lastProcessedSeq >>> 0);
+
+  // Round and storm state is small and changes every tick, so it is written
+  // whole rather than delta-compressed.
+  w.u8(round.phase);
+  w.u32(round.phaseTick >>> 0);
+  w.u32(round.mapSeed >>> 0);
+  w.u32(round.mapHash >>> 0);
+  w.u8(round.stormPhase);
+  w.f32(round.stormX);
+  w.f32(round.stormZ);
+  w.f32(round.stormRadius);
+  w.f32(round.targetX);
+  w.f32(round.targetZ);
+  w.f32(round.targetRadius);
+  w.u16(Math.min(0xffff, round.stormWait));
+  w.u8(round.aliveCount);
+  w.u16(round.winnerId);
 
   const removed: number[] = [];
   if (baseline !== null) {
@@ -425,6 +448,8 @@ export function encodeSnapshot(
       }
     }
     if ((mask & Field.Slot) !== 0) w.u8(state.slot);
+    if ((mask & Field.Mode) !== 0) w.u8(state.mode);
+    if ((mask & Field.Epoch) !== 0) w.u8(state.epoch);
   }
 
   // Loot: what the baseline had and we no longer do, then what is new.
@@ -481,7 +506,9 @@ function fullMask(isSelf: boolean): number {
     Field.Reload |
     Field.Kills |
     Field.Inventory |
-    Field.Slot;
+    Field.Slot |
+    Field.Mode |
+    Field.Epoch;
   return isSelf ? all : all & ~SELF_ONLY_FIELDS;
 }
 
@@ -520,6 +547,8 @@ function diffMask(next: PlayerState, prev: PlayerState, isSelf: boolean): number
     if (inventoryDiffers(next.inventory, prev.inventory)) mask |= Field.Inventory;
     if (next.slot !== prev.slot) mask |= Field.Slot;
   }
+  if (next.mode !== prev.mode) mask |= Field.Mode;
+  if (next.epoch !== prev.epoch) mask |= Field.Epoch;
   return mask;
 }
 
@@ -568,6 +597,23 @@ export function decodeSnapshot(
       for (const [id, state] of baseline.players) players.set(id, clonePlayer(state, id));
     }
 
+    const round: RoundState = {
+      phase: r.u8(),
+      phaseTick: r.u32(),
+      mapSeed: r.u32(),
+      mapHash: r.u32(),
+      stormPhase: r.u8(),
+      stormX: r.f32(),
+      stormZ: r.f32(),
+      stormRadius: r.f32(),
+      targetX: r.f32(),
+      targetZ: r.f32(),
+      targetRadius: r.f32(),
+      stormWait: r.u16(),
+      aliveCount: r.u8(),
+      winnerId: r.u16(),
+    };
+
     const removedCount = r.u8();
     for (let i = 0; i < removedCount; i++) players.delete(r.u16());
 
@@ -602,6 +648,8 @@ export function decodeSnapshot(
         }
       }
       if ((mask & Field.Slot) !== 0) state.slot = r.u8();
+      if ((mask & Field.Mode) !== 0) state.mode = r.u8();
+      if ((mask & Field.Epoch) !== 0) state.epoch = r.u8();
 
       players.set(id, state);
     }
@@ -634,7 +682,7 @@ export function decodeSnapshot(
       events.push(event);
     }
 
-    return { tick, lastProcessedSeq, players, loot, events };
+    return { tick, lastProcessedSeq, players, loot, events, round };
   } catch {
     return null;
   }
@@ -663,6 +711,8 @@ function clonePlayer(src: PlayerState, id: number): PlayerState {
     out.inventory[i] = { kind: from.kind, rarity: from.rarity, count: from.count };
   }
   out.slot = src.slot;
+  out.mode = src.mode;
+  out.epoch = src.epoch;
   return out;
 }
 

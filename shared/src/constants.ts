@@ -264,6 +264,54 @@ export const SHIELD_POTION_GAIN = 50;
 export const SHIELD_POTION_USE_TICKS = 40;
 export const SHIELD_POTION_STACK = 3;
 
+// --------------------------------------------------------------- round flow
+
+/** Players needed before a round will start. */
+export const LOBBY_MIN_PLAYERS = 2;
+export const LOBBY_COUNTDOWN_TICKS = 5 * TICK_RATE;
+/** How long the results screen stays up before the next round. */
+export const ROUND_END_TICKS = 8 * TICK_RATE;
+
+export const BUS_ALTITUDE = 140;
+export const BUS_DURATION_TICKS = 25 * TICK_RATE;
+/** The bus flies a chord this much longer than the map so it starts and ends outside. */
+export const BUS_PATH_OVERSHOOT = 1.45;
+export const BUS_SIZE_X = 9;
+export const BUS_SIZE_Y = 3.4;
+export const BUS_SIZE_Z = 4;
+/** Riders are spread along the bus so they are not all in the same spot. */
+export const BUS_RIDER_SPACING = 0.6;
+
+// ------------------------------------------------------------ skydive
+
+/** Terminal speed in a head-down dive, and how hard you can steer. */
+export const FREEFALL_TERMINAL = 55;
+export const FREEFALL_MAX_SPEED = 30;
+export const FREEFALL_ACCEL = 16;
+/** Below this height the glider opens by itself. */
+export const GLIDE_ALTITUDE = 60;
+export const GLIDE_FALL_SPEED = 9;
+export const GLIDE_MAX_SPEED = 14;
+export const GLIDE_ACCEL = 12;
+/** Drag applied to horizontal drift while airborne under a glider. */
+export const GLIDE_FRICTION = 1.6;
+
+// -------------------------------------------------------------------- storm
+
+export const STORM_PHASES = 6;
+/** Radius before the first shrink, then after each of the six phases. */
+export const STORM_RADII: readonly number[] = [230, 155, 104, 66, 38, 17, 0];
+/** Ticks the circle holds still before each shrink. */
+export const STORM_WAIT_TICKS = [30, 25, 20, 16, 13, 10].map((s) => s * TICK_RATE);
+/** Ticks each shrink takes. */
+export const STORM_SHRINK_TICKS = [25, 22, 20, 18, 15, 12].map((s) => s * TICK_RATE);
+/** Damage per second outside the circle, per phase. */
+export const STORM_DAMAGE: readonly number[] = [1, 2, 4, 7, 11, 16];
+/** How far inside the previous circle the next centre may sit, as a fraction. */
+export const STORM_CENTRE_DRIFT = 0.55;
+/** Vertical extent of the drawn storm wall. */
+export const STORM_WALL_HEIGHT = 90;
+
 // ------------------------------------------------------------------ gameplay
 
 export const MAX_PLAYERS = 20;

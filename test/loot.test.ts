@@ -12,6 +12,7 @@ import {
   RARITY_COUNT,
   Rarity,
   Rng,
+  RoundPhase,
   SHIELD_POTION_GAIN,
   SHIELD_POTION_USE_TICKS,
   WeaponClass,
@@ -266,6 +267,7 @@ describe('inventory in the running world', () => {
     const w = new World(SEED);
     const p = w.addPlayer(1, 'p');
     w.loot.items.clear();
+    w.round.state.phase = RoundPhase.Playing;
     return { world: w, p };
   }
 

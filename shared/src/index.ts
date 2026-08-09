@@ -5,6 +5,7 @@ export * from './binary.js';
 export * from './types.js';
 export * from './collision.js';
 export * from './map.js';
+export * from './round.js';
 export * from './movement.js';
 export * from './weapons.js';
 export * from './items.js';

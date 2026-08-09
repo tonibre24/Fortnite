@@ -9,6 +9,7 @@ import {
   PLAYER_MAX_HEALTH,
   RARITY_COUNT,
   Rarity,
+  RoundPhase,
   StateFlag,
   WEAPONS,
   WEAPON_CLASS_COUNT,
@@ -231,6 +232,8 @@ describe('server-side shooting', () => {
     target.state.pos.z = -10;
     // Inventory is the source of truth for what is in hand.
     giveWeapon(shooter.state, WeaponClass.Rifle, Rarity.Grey, 0);
+    // Damage only lands once a round is live; the lobby is a warm-up.
+    world.round.state.phase = RoundPhase.Playing;
     return { world, shooter, target };
   }
 
@@ -357,6 +360,7 @@ describe('lag compensation', () => {
     target.state.pos.x = 0;
     target.state.pos.y = GROUND_Y;
     target.state.pos.z = -10;
+    world.round.state.phase = RoundPhase.Playing;
     return { world, shooter };
   }
 

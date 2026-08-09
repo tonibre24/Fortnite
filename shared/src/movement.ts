@@ -3,6 +3,14 @@ import {
   AIR_ACCEL,
   AIR_FRICTION,
   COYOTE_TICKS,
+  FREEFALL_ACCEL,
+  FREEFALL_MAX_SPEED,
+  FREEFALL_TERMINAL,
+  GLIDE_ACCEL,
+  GLIDE_ALTITUDE,
+  GLIDE_FALL_SPEED,
+  GLIDE_FRICTION,
+  GLIDE_MAX_SPEED,
   GRAVITY,
   GROUND_ACCEL,
   GROUND_FRICTION,
@@ -16,7 +24,100 @@ import {
   WALK_SPEED,
 } from './constants.js';
 import { dequantizeYaw, f32 } from './math.js';
+import { MoveMode } from './round.js';
 import { Button, StateFlag, type InputCommand, type PlayerState } from './types.js';
+
+/** Direction the player is asking to move, in world space, already normalised. */
+function wishDirection(cmd: InputCommand): { x: number; z: number; active: boolean } {
+  let forward = 0;
+  let strafe = 0;
+  if ((cmd.buttons & Button.Forward) !== 0) forward += 1;
+  if ((cmd.buttons & Button.Back) !== 0) forward -= 1;
+  if ((cmd.buttons & Button.Right) !== 0) strafe += 1;
+  if ((cmd.buttons & Button.Left) !== 0) strafe -= 1;
+  if (forward !== 0 && strafe !== 0) {
+    forward *= Math.SQRT1_2;
+    strafe *= Math.SQRT1_2;
+  }
+  const yaw = dequantizeYaw(cmd.yawQ);
+  const sinYaw = Math.sin(yaw);
+  const cosYaw = Math.cos(yaw);
+  return {
+    x: cosYaw * strafe - sinYaw * forward,
+    z: -sinYaw * strafe - cosYaw * forward,
+    active: forward !== 0 || strafe !== 0,
+  };
+}
+
+/**
+ * Falling out of the bus. A dive accelerates towards terminal velocity with
+ * loose steering; below the glide altitude the glider opens by itself and the
+ * descent slows to something survivable, which is why there is no fall damage
+ * anywhere in this game.
+ */
+export function stepSkydive(
+  state: PlayerState,
+  cmd: InputCommand,
+  world: CollisionWorld,
+  dt: number,
+): void {
+  const gliding = state.mode === MoveMode.Glide;
+  const wish = wishDirection(cmd);
+
+  const accel = gliding ? GLIDE_ACCEL : FREEFALL_ACCEL;
+  const maxSpeed = gliding ? GLIDE_MAX_SPEED : FREEFALL_MAX_SPEED;
+
+  if (gliding) {
+    const speed = Math.sqrt(state.vel.x * state.vel.x + state.vel.z * state.vel.z);
+    if (speed > 0) {
+      const scale = Math.max(0, speed - speed * GLIDE_FRICTION * dt) / speed;
+      state.vel.x *= scale;
+      state.vel.z *= scale;
+    }
+  }
+
+  if (wish.active) {
+    const along = state.vel.x * wish.x + state.vel.z * wish.z;
+    const addSpeed = maxSpeed - along;
+    if (addSpeed > 0) {
+      const step = Math.min(accel * dt * maxSpeed, addSpeed);
+      state.vel.x += step * wish.x;
+      state.vel.z += step * wish.z;
+    }
+  }
+
+  if (gliding) {
+    // The glider holds a steady sink rate rather than accelerating.
+    state.vel.y = -GLIDE_FALL_SPEED;
+  } else {
+    state.vel.y -= GRAVITY * dt;
+    if (state.vel.y < -FREEFALL_TERMINAL) state.vel.y = -FREEFALL_TERMINAL;
+  }
+
+  const landed = sweepAxis(state.pos, Axis.Y, state.vel.y * dt, PLAYER_RADIUS, PLAYER_HEIGHT, world);
+  if (landed) state.vel.y = 0;
+  moveHorizontal(state, state.vel.x * dt, state.vel.z * dt, false, world);
+
+  if (landed) {
+    // Touching down ends the drop; ordinary movement takes over next tick.
+    state.mode = MoveMode.Ground;
+    state.flags |= StateFlag.OnGround;
+    state.sinceGrounded = 0;
+    state.vel.x = 0;
+    state.vel.z = 0;
+  } else if (!gliding && state.pos.y <= GLIDE_ALTITUDE) {
+    state.mode = MoveMode.Glide;
+  }
+
+  state.yawQ = cmd.yawQ;
+  state.pitchQ = cmd.pitchQ;
+  state.pos.x = f32(state.pos.x);
+  state.pos.y = f32(state.pos.y);
+  state.pos.z = f32(state.pos.z);
+  state.vel.x = f32(state.vel.x);
+  state.vel.y = f32(state.vel.y);
+  state.vel.z = f32(state.vel.z);
+}
 
 /**
  * The single movement implementation. The server runs it to produce authority;
@@ -29,28 +130,26 @@ import { Button, StateFlag, type InputCommand, type PlayerState } from './types.
  * drifting by fractions of a ULP every tick.
  */
 export function stepMovement(state: PlayerState, cmd: InputCommand, world: CollisionWorld, dt: number): void {
+  // Riding the bus is not simulated at all - the server places you - and the
+  // drop has its own physics.
+  if (state.mode === MoveMode.Bus) {
+    state.yawQ = cmd.yawQ;
+    state.pitchQ = cmd.pitchQ;
+    return;
+  }
+  if (state.mode === MoveMode.Freefall || state.mode === MoveMode.Glide) {
+    stepSkydive(state, cmd, world, dt);
+    return;
+  }
+
   const onGround = (state.flags & StateFlag.OnGround) !== 0;
   const jumpLatched = (state.flags & StateFlag.JumpLatched) !== 0;
 
   // --- desired horizontal direction, in world space -------------------------
-  const yaw = dequantizeYaw(cmd.yawQ);
-  let forward = 0;
-  let strafe = 0;
-  if ((cmd.buttons & Button.Forward) !== 0) forward += 1;
-  if ((cmd.buttons & Button.Back) !== 0) forward -= 1;
-  if ((cmd.buttons & Button.Right) !== 0) strafe += 1;
-  if ((cmd.buttons & Button.Left) !== 0) strafe -= 1;
-  if (forward !== 0 && strafe !== 0) {
-    forward *= Math.SQRT1_2;
-    strafe *= Math.SQRT1_2;
-  }
-
-  const sinYaw = Math.sin(yaw);
-  const cosYaw = Math.cos(yaw);
-  // Camera-space forward is (-sin, 0, -cos) and right is (cos, 0, -sin).
-  const wishX = cosYaw * strafe - sinYaw * forward;
-  const wishZ = -sinYaw * strafe - cosYaw * forward;
-  const wishing = forward !== 0 || strafe !== 0;
+  const wish = wishDirection(cmd);
+  const wishX = wish.x;
+  const wishZ = wish.z;
+  const wishing = wish.active;
 
   const sprinting = wishing && (cmd.buttons & Button.Sprint) !== 0;
   const targetSpeed = sprinting ? SPRINT_SPEED : WALK_SPEED;

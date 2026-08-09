@@ -11,10 +11,12 @@ import {
   peekSnapshotTick,
   StateFlag,
   type GameEvent,
+  createRoundState,
   type ClientBaseline,
   type GameMap,
   type InputCommand,
   type LootItem,
+  type RoundState,
   type WelcomeMsg,
 } from '@br/shared';
 import { Connection, type ConnectionStatus, type SocketLike } from '../net/Connection.js';
@@ -64,6 +66,7 @@ export class GameClient {
   readonly remotes = new Map<number, RenderedRemote>();
 
   map: GameMap | null = null;
+  mapSeed = 0;
   mapHashMatches = true;
   /** Fraction between the previous and current predicted tick, for rendering. */
   alpha = 0;
@@ -78,6 +81,10 @@ export class GameClient {
   readonly events: GameEvent[] = [];
   /** Everything currently lying in the world, straight from the last snapshot. */
   loot: ReadonlyMap<number, LootItem> = new Map();
+  /** Round and storm state from the last snapshot. */
+  round: RoundState = createRoundState(0);
+  /** Bumped whenever the map is rebuilt, so the renderer knows to follow. */
+  mapVersion = 0;
 
   private readonly interpolator: RemoteInterpolator;
   private readonly input: InputSource;
@@ -146,11 +153,24 @@ export class GameClient {
   }
 
   private onWelcome(msg: WelcomeMsg): void {
-    this.map = generateMap(msg.mapSeed);
     this.predictor.state.id = msg.playerId;
-    // If this ever fails the two sides are simulating different worlds and
-    // every prediction from here on would be wrong.
-    this.mapHashMatches = hashMap(this.map) === msg.mapHash;
+    this.rebuildMap(msg.mapSeed, msg.mapHash);
+  }
+
+  /**
+   * Builds the map for a seed and checks it against the server's fingerprint.
+   * If this ever fails the two sides are simulating different worlds and every
+   * prediction from here on would be wrong.
+   */
+  private rebuildMap(seed: number, expectedHash: number): void {
+    this.map = generateMap(seed);
+    this.mapSeed = seed;
+    this.mapVersion += 1;
+    this.mapHashMatches = hashMap(this.map) === expectedHash;
+    // Deliberately not touching the predictor: throwing away pending input here
+    // would discard commands the server still has queued, and every replay
+    // afterwards would be short by exactly those, leaving prediction adrift for
+    // the rest of the round.
   }
 
   private onSnapshot(data: ArrayBuffer): void {
@@ -181,6 +201,14 @@ export class GameClient {
     this.lastAppliedTick = decoded.tick;
     this.snapshots.set(decoded.tick, { players: decoded.players, loot: decoded.loot });
     this.loot = decoded.loot;
+    this.round = decoded.round;
+
+    // A new round means a new map. Rebuild it and re-check the fingerprint, so
+    // a generator disagreement is caught on every round rather than only the
+    // first.
+    if (decoded.round.mapSeed !== 0 && decoded.round.mapSeed !== this.mapSeed) {
+      this.rebuildMap(decoded.round.mapSeed, decoded.round.mapHash);
+    }
     this.trimSnapshots(decoded.tick);
     this.ackTick = decoded.tick;
 

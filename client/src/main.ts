@@ -1,12 +1,18 @@
 import './style.css';
 import {
+  BUS_SIZE_Y,
   DEFAULT_PORT,
   EventType,
   ItemKind,
+  LOBBY_COUNTDOWN_TICKS,
   MEDKIT_USE_TICKS,
   PICKUP_RANGE,
   PLAYER_EYE_HEIGHT,
+  MoveMode,
+  RoundPhase,
   SHIELD_POTION_USE_TICKS,
+  STORM_PHASES,
+  TICK_RATE,
   isConsumableKind,
   itemLabel,
   dequantizePitch,
@@ -22,6 +28,7 @@ import { InputSampler } from './input/InputSampler.js';
 import { PlayerView } from './render/PlayerView.js';
 import { Renderer } from './render/Renderer.js';
 import { LootView } from './render/LootView.js';
+import { RoundView } from './render/RoundView.js';
 import { Tracers } from './render/Tracers.js';
 import { WorldView } from './render/WorldView.js';
 import { Hud } from './ui/Hud.js';
@@ -43,6 +50,7 @@ const input = new InputSampler(canvas);
 const playerView = new PlayerView(renderer.scene);
 const tracers = new Tracers(renderer.scene);
 const lootView = new LootView(renderer.scene);
+const roundView = new RoundView(renderer.scene);
 
 const client = new GameClient({
   url: resolveServerUrl(),
@@ -53,6 +61,7 @@ const client = new GameClient({
 client.connect();
 
 let worldView: WorldView | null = null;
+let worldVersion = -1;
 /** Who the camera follows once the local player is out of the round. */
 let spectating = 0;
 /** Ticks the local player has held fire on a consumable, for the use bar. */
@@ -109,8 +118,64 @@ function handleEvent(event: GameEvent, now: number): void {
   }
 }
 
+/** Human-readable summary of what the round is doing right now. */
+function roundBanner(): { title: string | null; sub: string } {
+  const round = client.round;
+  if (!client.alive) {
+    const won = round.winnerId === client.playerId;
+    if (round.phase === RoundPhase.Ended) {
+      return {
+        title: won ? 'victory royale' : 'round over',
+        sub: won ? 'last one standing' : `${nameOf(round.winnerId)} won · next round shortly`,
+      };
+    }
+    return {
+      title: 'eliminated',
+      sub: `spectating ${nameOf(spectating)} · ${round.aliveCount} still in`,
+    };
+  }
+
+  switch (round.phase) {
+    case RoundPhase.Lobby: {
+      const waiting = client.playerCount < 2;
+      return {
+        title: 'lobby',
+        sub: waiting
+          ? 'waiting for another player'
+          : `bus leaves in ${Math.max(0, Math.ceil((LOBBY_COUNTDOWN_TICKS - round.phaseTick) / TICK_RATE))}s`,
+      };
+    }
+    case RoundPhase.Bus:
+      return { title: null, sub: '' };
+    case RoundPhase.Ended:
+      return {
+        title: round.winnerId === client.playerId ? 'victory royale' : 'round over',
+        sub:
+          round.winnerId === client.playerId
+            ? 'last one standing'
+            : `${nameOf(round.winnerId)} won · next round shortly`,
+      };
+    default:
+      return { title: null, sub: '' };
+  }
+}
+
+/** While riding, the camera sits just under the bus looking along its path. */
+function busCamera(): boolean {
+  if (client.predictor.state.mode !== MoveMode.Bus) return false;
+  const p = client.predictor.state.pos;
+  renderer.camera.position.set(p.x, p.y - BUS_SIZE_Y, p.z);
+  renderer.camera.rotation.set(
+    dequantizePitch(client.predictor.state.pitchQ),
+    dequantizeYaw(client.predictor.state.yawQ),
+    0,
+  );
+  return true;
+}
+
 /** Places the camera: first person while alive, chase cam once eliminated. */
 function updateCamera(): void {
+  if (busCamera()) return;
   if (client.alive) {
     client.predictor.renderPosition(client.alpha, eye);
     renderer.camera.position.set(eye.x, eye.y + PLAYER_EYE_HEIGHT, eye.z);
@@ -150,6 +215,7 @@ function buildStats(): string[] {
     `pos      ${p.state.pos.x.toFixed(1)} ${p.state.pos.y.toFixed(1)} ${p.state.pos.z.toFixed(1)}`,
     `pred err ${p.lastError.toFixed(4)} (max ${p.maxError.toFixed(3)})`,
     `loot     ${client.loot.size}`,
+    `round    ${['lobby', 'bus', 'playing', 'ended'][client.round.phase] ?? '?'} · storm ${Math.min(client.round.stormPhase + 1, STORM_PHASES)}/${STORM_PHASES}`,
     `map      ${client.mapHashMatches ? 'ok' : 'MISMATCH'}`,
   ];
 }
@@ -158,8 +224,11 @@ function frame(): void {
   const now = performance.now();
   client.update(now);
 
-  if (worldView === null && client.map !== null) {
+  // Rebuilt whenever a new round hands us a new map.
+  if (client.map !== null && worldVersion !== client.mapVersion) {
+    worldView?.dispose(renderer.scene);
     worldView = new WorldView(renderer.scene, client.map);
+    worldVersion = client.mapVersion;
   }
 
   for (const event of client.drainEvents()) handleEvent(event, now);
@@ -188,11 +257,10 @@ function frame(): void {
     hud.setPrompt(reach === null ? null : `E — ${reach.chest ? 'open chest' : `pick up ${reach.label}`}`);
     hud.setVitals(state.health, state.shield);
     hud.setWeapon(state.weapon, state.ammo, weapon === null ? 0 : weaponStats(weapon.cls).magazine, state.reload);
-    hud.setCrosshairVisible(client.alive && input.locked);
-    hud.setBanner(
-      client.alive ? null : 'eliminated',
-      client.alive ? '' : `spectating ${nameOf(spectating)} · ${client.playerCount - 1} still in`,
-    );
+    hud.setCrosshairVisible(client.alive && input.locked && state.mode === MoveMode.Ground);
+    const banner = roundBanner();
+    hud.setBanner(banner.title, banner.sub);
+    hud.setRound(client.round, state.mode);
     hud.setHint(
       input.locked
         ? null
@@ -200,6 +268,7 @@ function frame(): void {
     );
   }
 
+  roundView.update(client.round);
   lootView.update(client.loot, now);
   tracers.update(now);
   tracers.flush();

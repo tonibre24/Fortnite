@@ -177,6 +177,10 @@ function applyHit(world: World, shooter: ServerPlayer, hit: PelletHit): void {
   // Two players can resolve shots at the same victim in the same tick. The
   // second one must not score a hit marker on a corpse.
   if ((state.flags & StateFlag.Alive) === 0) return;
+  // The lobby is a warm-up: guns work, but nobody can be knocked out of a
+  // round that has not started. Without this a lobby fight can leave one
+  // player standing and the round can never reach its minimum to begin.
+  if (!world.round.live) return;
 
   const result = applyDamage(state.health, state.shield, hit.damage);
   state.health = result.health;

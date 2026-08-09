@@ -76,9 +76,11 @@ describe('snapshot encoding', () => {
     const state = snapshot([player(1, 10), player(2, -20)]);
     const baseline = { tick: 1, players: state, lootIds: new Set<number>() };
     const delta = encodeSnapshot(2, state, baseline, 1, 5);
-    // type + tick + flags + baseline + seq + removedPlayers + playerCount
-    // + removedLoot + addedLoot + eventCount
-    expect(delta.byteLength).toBe(1 + 4 + 1 + 4 + 4 + 1 + 2 + 2 + 2 + 1);
+    // type + tick + flags + baseline + seq, the fixed round block, then
+    // removedPlayers + playerCount + removedLoot + addedLoot + eventCount.
+    const header = 1 + 4 + 1 + 4 + 4;
+    const roundBlock = 1 + 4 + 4 + 4 + 1 + 4 * 6 + 2 + 1 + 2;
+    expect(delta.byteLength).toBe(header + roundBlock + 1 + 2 + 2 + 2 + 1);
   });
 
   it('removes players that left', () => {

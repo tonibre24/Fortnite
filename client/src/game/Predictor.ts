@@ -2,6 +2,7 @@ import {
   RECONCILE_EPSILON,
   RECONCILE_SMOOTH_TIME,
   RECONCILE_SNAP_DISTANCE,
+  MoveMode,
   TICK_DT,
   clonePlayerState,
   copyPlayerState,
@@ -45,6 +46,8 @@ export class Predictor {
   totalError = 0;
   reconcileCount = 0;
   correctionCount = 0;
+  /** Ticks spent as cargo on the bus, where position comes from the server. */
+  busSnaps = 0;
 
   reset(authoritative: PlayerState): void {
     copyPlayerState(this.state, authoritative);
@@ -73,15 +76,36 @@ export class Predictor {
       return;
     }
 
+    // Two cases where the server is moving us rather than simulating our
+    // input: a changed epoch (respawn, boarding or leaving the bus), and every
+    // tick spent riding, where the server simply places us along the bus path.
+    // The replay below is still correct - the server applies the same
+    // unacknowledged commands from the same state - but neither is a
+    // misprediction, and counting them as one would bury a real divergence.
+    const teleported = authoritative.epoch !== this.state.epoch;
+    const carried = authoritative.mode === MoveMode.Bus;
+    if (carried) this.busSnaps += 1;
+
     while (this.pending.length > 0 && this.pending[0]!.seq <= lastProcessedSeq) {
       this.pending.shift();
     }
-
 
     const before = clonePlayerState(this.state);
     copyPlayerState(this.state, authoritative);
     for (const cmd of this.pending) {
       stepMovement(this.state, cmd, world, TICK_DT);
+    }
+
+    if (teleported || carried) {
+      // Authority, not a misprediction: land on it instantly and record
+      // nothing, or every respawn would read as netcode drift.
+      this.smoothing.x = 0;
+      this.smoothing.y = 0;
+      this.smoothing.z = 0;
+      this.previousPos.x = this.state.pos.x;
+      this.previousPos.y = this.state.pos.y;
+      this.previousPos.z = this.state.pos.z;
+      return;
     }
 
     const error = distance(before.pos, this.state.pos);

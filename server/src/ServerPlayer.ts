@@ -43,6 +43,10 @@ export class ServerPlayer {
   interactHeld = false;
   /** Ticks spent so far using the consumable in hand. */
   useTicks = 0;
+  /** Fractional storm damage carried between ticks. */
+  stormDebt = 0;
+  /** Whole storm damage waiting to be applied this tick. */
+  pendingStormDamage = 0;
 
   constructor(
     readonly id: number,
@@ -73,6 +77,19 @@ export class ServerPlayer {
       this.queue.push(cmd);
       this.lastQueuedSeq = cmd.seq;
     }
+  }
+
+  /**
+   * Marks a server-initiated move the client could not have predicted: a
+   * respawn, boarding the bus, or stepping off it.
+   *
+   * Only the epoch changes. Queued input is deliberately kept: those commands
+   * are still coming to the client's replay too, and dropping them here would
+   * leave the server having simulated a different set than the client did.
+   */
+  teleport(): void {
+    this.state.epoch = (this.state.epoch + 1) & 0xff;
+    this.useTicks = 0;
   }
 
   refillCredit(): void {

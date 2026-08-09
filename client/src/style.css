@@ -312,6 +312,19 @@ body {
   background: #6ee7a0;
 }
 
+/* ----------------------------------------------------------------- round */
+
+#round {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 14px;
+  text-align: center;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
+
 /* ------------------------------------------------------------- kill feed */
 
 #killfeed {

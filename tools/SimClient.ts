@@ -3,6 +3,7 @@ import {
   EventType,
   MAX_PITCH,
   ItemKind,
+  MoveMode,
   PICKUP_RANGE,
   PLAYER_EYE_HEIGHT,
   PLAYER_HEIGHT,
@@ -39,6 +40,9 @@ const ENGAGE_RANGE = 90;
 const AIM_ERROR = 0.05;
 /** How far a bot will detour for an item it can see. */
 const LOOT_SEEK_RANGE = 600;
+/** Ticks a bot rides the bus before jumping, so drops are spread out. */
+const BUS_JUMP_MIN = 40;
+const BUS_JUMP_MAX = 380;
 
 /**
  * Randomized input that looks enough like a player to exercise every code path:
@@ -52,10 +56,13 @@ class BotInput implements InputSource {
   private ticksLeft = 0;
   private slot = 0;
   private interactHeld = false;
+  private busJumpAt = 0;
+  private busTicks = 0;
   private client: GameClient | null = null;
 
   constructor(private readonly rng: Rng) {
     this.yaw = rng.range(-Math.PI, Math.PI);
+    this.busJumpAt = rng.int(BUS_JUMP_MIN, BUS_JUMP_MAX);
   }
 
   attach(client: GameClient): void {
@@ -67,6 +74,49 @@ class BotInput implements InputSource {
   }
 
   sample(): InputSample {
+    const mode = this.client?.predictor.state.mode ?? MoveMode.Ground;
+
+    // Riding: wait a bit, then step off.
+    if (mode === MoveMode.Bus) {
+      this.busTicks += 1;
+      return {
+        buttons: this.busTicks >= this.busJumpAt ? Button.Jump : 0,
+        yawQ: quantizeYaw(this.yaw),
+        pitchQ: quantizePitch(-0.6),
+        slot: this.slot,
+      };
+    }
+    // Dropping: steer towards the middle of the map so bots land on the island
+    // rather than drifting into the storm.
+    if (mode === MoveMode.Freefall || mode === MoveMode.Glide) {
+      this.busTicks = 0;
+      const self = this.client?.predictor.state.pos;
+      const pois = this.client?.map?.pois;
+      if (self !== undefined && pois !== undefined && pois.length > 0) {
+        // Aim for the nearest town so the drop lands on loot rather than in a
+        // field, which is what puts pickups under test.
+        let bestX = 0;
+        let bestZ = 0;
+        let bestDistSq = Number.POSITIVE_INFINITY;
+        for (const poi of pois) {
+          const dx = poi.x - self.x;
+          const dz = poi.z - self.z;
+          const distSq = dx * dx + dz * dz;
+          if (distSq >= bestDistSq) continue;
+          bestDistSq = distSq;
+          bestX = dx;
+          bestZ = dz;
+        }
+        this.yaw = Math.atan2(-bestX, -bestZ);
+      }
+      return {
+        buttons: Button.Forward,
+        yawQ: quantizeYaw(this.yaw),
+        pitchQ: quantizePitch(-0.5),
+        slot: this.slot,
+      };
+    }
+
     if (this.ticksLeft <= 0) this.reroll();
     this.ticksLeft -= 1;
 
@@ -220,6 +270,11 @@ export class SimClient {
   hitsLanded = 0;
   killsDealt = 0;
 
+  /** Set once this bot has actually dropped from the bus and touched down. */
+  landed = false;
+  private wasAirborne = false;
+  readonly modesSeen = new Set<number>();
+
   /** Loot the bot has managed to collect, for the sim report. */
   get carried(): number {
     let count = 0;
@@ -330,6 +385,8 @@ export class SimClient {
     this.shotsFired = 0;
     this.hitsLanded = 0;
     this.killsDealt = 0;
+    this.landed = false;
+    this.wasAirborne = false;
     this.client.connection.bytesIn = 0;
     this.client.connection.packetsIn = 0;
     this.errors.length = 0;
@@ -368,6 +425,10 @@ export class SimClient {
       try {
         this.client.update(performance.now());
         this.consumeEvents();
+        const mode = this.client.predictor.state.mode;
+        this.modesSeen.add(mode);
+        if (mode === MoveMode.Freefall || mode === MoveMode.Glide) this.wasAirborne = true;
+        else if (this.wasAirborne && mode === MoveMode.Ground) this.landed = true;
       } catch (err) {
         this.errors.push(`${this.options.name}: ${err instanceof Error ? err.stack : String(err)}`);
       }

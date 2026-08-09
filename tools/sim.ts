@@ -5,7 +5,7 @@
  * client netcode with randomized input, runs an accelerated round, then prints
  * a report. Exits non-zero when anything looks wrong, so it doubles as CI.
  */
-import { RECONCILE_EPSILON, TICK_MS } from '@br/shared';
+import { RECONCILE_EPSILON, ROUND_PHASE_NAMES, STORM_PHASES, TICK_MS } from '@br/shared';
 import { GameServer } from '../server/src/GameServer.js';
 import { SimClient } from './SimClient.js';
 
@@ -142,6 +142,7 @@ function printReport(
   const bytes = sum(connected.map((c) => c.bytesIn));
   const mapMismatches = connected.filter((c) => !c.mapHashMatches).length;
   const lootTaken = server.world.pickupCount;
+  const landed = clients.filter((c) => c.landed).length;
   const droppedCommands = sum(
     [...server.world.players.values()].map((p) => p.droppedCommands),
   );
@@ -178,6 +179,20 @@ function printReport(
   console.log(
     `  loot             ${server.world.pickupCount} picked up, ${server.world.loot.items.size} left on the ground`,
   );
+  console.log('');
+
+  const round = server.world.round.state;
+  console.log('round');
+  console.log(`  phase            ${ROUND_PHASE_NAMES[round.phase] ?? '?'}`);
+  console.log(`  rounds finished  ${server.world.roundsPlayed}`);
+  console.log(
+    `  storm            phase ${Math.min(round.stormPhase + 1, STORM_PHASES)}/${STORM_PHASES}, radius ${round.stormRadius.toFixed(0)}`,
+  );
+  console.log(`  landed by drop   ${landed}/${connected.length}`);
+  const modes = new Set<number>();
+  for (const c of connected) for (const m of c.modesSeen) modes.add(m);
+  console.log(`  modes observed   ${[...modes].sort().join(',')} (0 ground, 1 bus, 2 freefall, 3 glide)`);
+  console.log(`  bus-carried ticks ${sum(connected.map((c) => c.client.predictor.busSnaps))}`);
   console.log(`  still alive      ${survivors}/${connected.length}`);
   console.log('');
 
@@ -219,6 +234,9 @@ function printReport(
   if (shots === 0) problems.push('nobody fired a shot — combat never engaged');
   if (hits === 0) problems.push('no shot ever connected — hit detection or lag compensation is broken');
   if (lootTaken <= 0) problems.push('no loot was ever picked up');
+  // A bot can legitimately be shot out of the sky, so only a complete absence
+  // of landings means the drop is broken.
+  if (connected.length > 0 && landed === 0) problems.push('nobody ever landed from the bus');
   // With no packet loss the prediction must reproduce the server exactly, so
   // any correction at all means the two simulations diverged.
   if (droppedCommands > 0) problems.push(`${droppedCommands} input commands dropped by the server`);

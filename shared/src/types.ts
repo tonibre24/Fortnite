@@ -74,6 +74,14 @@ export interface PlayerState {
   inventory: ItemStack[];
   /** Which slot is in hand. */
   slot: number;
+  /** Which physics apply right now: on foot, riding the bus, diving or gliding. */
+  mode: number;
+  /**
+   * Bumped whenever the server moves a player without their input asking for
+   * it - a respawn, or boarding the bus. The client resets its prediction on a
+   * change rather than trying to reconcile a teleport.
+   */
+  epoch: number;
 }
 
 export function createPlayerState(id: number): PlayerState {
@@ -93,6 +101,8 @@ export function createPlayerState(id: number): PlayerState {
     kills: 0,
     inventory: createInventory(),
     slot: 0,
+    mode: 0,
+    epoch: 0,
   };
 }
 
@@ -118,6 +128,8 @@ export function copyPlayerState(out: PlayerState, src: PlayerState): PlayerState
     copyStack(out.inventory[i]!, src.inventory[i]!);
   }
   out.slot = src.slot;
+  out.mode = src.mode;
+  out.epoch = src.epoch;
   return out;
 }
 

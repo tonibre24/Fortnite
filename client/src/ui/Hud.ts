@@ -13,7 +13,12 @@ import {
   PLAYER_MAX_HEALTH,
   PLAYER_MAX_SHIELD,
   weaponLabel,
+  MoveMode,
+  RoundPhase,
+  STORM_PHASES,
+  TICK_RATE,
   type ItemStack,
+  type RoundState,
 } from '@br/shared';
 import type { ConnectionStatus } from '../net/Connection.js';
 
@@ -51,6 +56,7 @@ export class Hud {
   private readonly promptEl = mustFind('prompt');
   private readonly useBarEl = mustFind('usebar');
   private readonly useBarFill = mustFind('usebar').querySelector('i') as HTMLElement;
+  private readonly roundEl = mustFind('round');
   private readonly slotEls: HTMLElement[] = [];
   private inventorySignature = '';
 
@@ -143,6 +149,26 @@ export class Hud {
       qty.textContent = isConsumableKind(stack.kind) ? `x${stack.count}` : `${stack.count}`;
       tint.style.background = `#${(RARITY_COLORS[stack.rarity] ?? RARITY_COLORS[0]).toString(16).padStart(6, '0')}`;
     }
+  }
+
+  /** Top-centre round readout: phase, who is left, and the storm clock. */
+  setRound(round: RoundState, mode: number): void {
+    const parts: string[] = [];
+    parts.push(`${round.aliveCount} alive`);
+
+    if (round.phase === RoundPhase.Bus) {
+      parts.push(mode === MoveMode.Bus ? 'space to jump' : 'dropping');
+    } else if (round.phase === RoundPhase.Playing) {
+      const phase = Math.min(round.stormPhase + 1, STORM_PHASES);
+      parts.push(
+        round.stormWait > 0
+          ? `storm ${phase}/${STORM_PHASES} in ${Math.ceil(round.stormWait / TICK_RATE)}s`
+          : `storm ${phase}/${STORM_PHASES} closing`,
+      );
+    } else if (round.phase === RoundPhase.Lobby) {
+      parts.push('lobby');
+    }
+    this.roundEl.textContent = parts.join('   ·   ');
   }
 
   setPrompt(text: string | null): void {
