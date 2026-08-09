@@ -43,6 +43,8 @@ export class CameraRig {
 
   private readonly anchor = new Vector3();
   private readonly desired = new Vector3();
+  /** Scratch for the look-at point; `update` runs every frame and must not allocate. */
+  private readonly lookAt = new Vector3();
 
   constructor(
     scene: Scene,
@@ -109,13 +111,12 @@ export class CameraRig {
     this.applyShake();
 
     this.camera.position.copyFrom(this.desired);
-    this.camera.setTarget(
-      new Vector3(
-        this.anchor.x + forward.x * 12 + rightX * this.currentShoulder,
-        this.anchor.y + forward.y * 12,
-        this.anchor.z + forward.z * 12 + rightZ * this.currentShoulder,
-      ),
+    this.lookAt.set(
+      this.anchor.x + forward.x * 12 + rightX * this.currentShoulder,
+      this.anchor.y + forward.y * 12,
+      this.anchor.z + forward.z * 12 + rightZ * this.currentShoulder,
     );
+    this.camera.setTarget(this.lookAt);
   }
 
   /** Pulls the camera in front of any geometry between the head and the desired spot. */

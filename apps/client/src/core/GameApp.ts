@@ -106,6 +106,10 @@ export class GameApp {
   private matchOverShown = false;
   private disposed = false;
 
+  // Scratch values for the frame loop; the renderer must not allocate while firing.
+  private readonly shotDirection: Vec3 = { x: 0, y: 0, z: 1 };
+  private readonly muzzleFallback = new Vector3();
+
   private readonly onResize = (): void => this.engine?.resize();
   private readonly onBeforeUnload = (): void => {
     void this.network?.leave();
@@ -465,7 +469,13 @@ export class GameApp {
       targets: this.buildLocalHitscanTargets(state, network.sessionId),
     });
 
-    this.renderShot(visual.origin, visual.endPoints, visual.impactNormals, visual.hitPlayer, true);
+    this.renderShot(
+      visual.origin,
+      visual.endPoints,
+      visual.impactNormals,
+      visual.hitPlayer,
+      network.sessionId,
+    );
 
     const recoil = this.weapons.recoilForShot(aiming);
     this.input?.applyRecoil(recoil.vertical, recoil.horizontal);
@@ -714,10 +724,13 @@ export class GameApp {
     if (payload.shooterId === this.network?.sessionId) return;
 
     const hitPlayer = payload.impactNormals.map((normal) => normal === null);
-    this.renderShot(payload.origin, payload.endPoints, payload.impactNormals, hitPlayer, false);
-
-    const avatar = this.avatars.get(payload.shooterId);
-    if (avatar) this.effects?.spawnMuzzleFlash(avatar.getMuzzleWorldPosition());
+    this.renderShot(
+      payload.origin,
+      payload.endPoints,
+      payload.impactNormals,
+      hitPlayer,
+      payload.shooterId,
+    );
 
     // Distance attenuation so a firefight across the arena is not deafening.
     const listener = this.localPlayer?.renderPosition;
@@ -737,7 +750,7 @@ export class GameApp {
     endPoints: readonly Vec3[],
     normals: readonly (Vec3 | null)[],
     hitPlayer: readonly boolean[],
-    isLocal: boolean,
+    shooterId: string,
   ): void {
     const effects = this.effects;
     if (!effects) return;
@@ -749,15 +762,33 @@ export class GameApp {
       effects.spawnImpact(end, normal, hitPlayer[i] ? 'player' : 'world');
     }
 
-    if (isLocal) {
-      const avatar = this.avatars.get(this.network?.sessionId ?? '');
-      if (avatar) effects.spawnMuzzleFlash(avatar.getMuzzleWorldPosition());
-      else effects.spawnMuzzleFlash(new Vector3(origin.x, origin.y, origin.z));
+    // Orient the flash down the first pellet's path so it flares along the barrel.
+    const first = endPoints[0];
+    let direction: Vec3 | undefined;
+    if (first) {
+      const dx = first.x - origin.x;
+      const dy = first.y - origin.y;
+      const dz = first.z - origin.z;
+      const length = Math.hypot(dx, dy, dz);
+      if (length > 1e-4) {
+        this.shotDirection.x = dx / length;
+        this.shotDirection.y = dy / length;
+        this.shotDirection.z = dz / length;
+        direction = this.shotDirection;
+      }
+    }
+
+    const avatar = this.avatars.get(shooterId);
+    if (avatar) {
+      effects.spawnMuzzleFlash(avatar.getMuzzleWorldPosition(), direction);
+    } else {
+      this.muzzleFallback.set(origin.x, origin.y, origin.z);
+      effects.spawnMuzzleFlash(this.muzzleFallback, direction);
     }
   }
 
   private handleHitConfirmed(payload: HitConfirmedPayload): void {
-    this.hud.showHitMarker(payload.headshot);
+    this.hud.showHitMarker(payload.headshot, payload.killed);
     this.hud.showDamageNumber(payload.point, payload.damage, payload.headshot, performance.now());
     this.audio.play(payload.headshot ? 'headshotConfirm' : 'hitConfirm');
   }
@@ -771,7 +802,7 @@ export class GameApp {
       );
       this.hud.showDamageDirection(yaw, performance.now());
     }
-    this.hud.flashDamage();
+    this.hud.flashDamage(payload.damage);
     this.cameraRig?.addShake(Math.min(0.16, payload.damage / 260));
     this.audio.play('takeDamage');
   }

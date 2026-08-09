@@ -1,4 +1,5 @@
 import { Matrix, Vector3 } from '@babylonjs/core/Maths/math.vector';
+import { Viewport } from '@babylonjs/core/Maths/math.viewport';
 import type { Camera } from '@babylonjs/core/Cameras/camera';
 import type { Scene } from '@babylonjs/core/scene';
 import {
@@ -120,6 +121,12 @@ export class Hud {
   private readonly playersValue: HTMLElement;
 
   private hitmarkerTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // Scratch objects for the per-frame projection of world-anchored elements. The HUD
+  // updates every rendered frame, so allocating here would be a steady GC drip.
+  private readonly scratchWorld = new Vector3();
+  private readonly scratchProjected = new Vector3();
+  private readonly scratchViewport = new Viewport(0, 0, 0, 0);
 
   constructor(private readonly sessionIdProvider: () => string) {
     // --- crosshair ---------------------------------------------------------
@@ -318,9 +325,10 @@ export class Hud {
   // Combat feedback
   // -------------------------------------------------------------------------
 
-  showHitMarker(headshot: boolean): void {
+  showHitMarker(headshot: boolean, lethal = false): void {
     this.hitmarker.classList.remove('show');
     setClass(this.hitmarker, 'headshot', headshot);
+    setClass(this.hitmarker, 'lethal', lethal);
     // Force a reflow so the animation restarts on rapid consecutive hits.
     void this.hitmarker.offsetWidth;
     this.hitmarker.classList.add('show');
@@ -358,8 +366,16 @@ export class Hud {
     slot.node.style.opacity = '1';
   }
 
-  flashDamage(): void {
-    this.damageVignette.style.opacity = '1';
+  /**
+   * A brief red vignette when the local player is hit.
+   *
+   * Intensity scales with the damage taken, so a shotgun blast at point-blank range
+   * reads differently from a stray rifle round — the punch is the information.
+   */
+  flashDamage(damage = 20): void {
+    const intensity = clamp(0.42 + damage / 70, 0.42, 1);
+    this.damageVignette.style.setProperty('--damage-intensity', intensity.toFixed(2));
+    this.damageVignette.style.opacity = String(intensity);
     // The transition handles the fade; a rAF hand-off avoids fighting the style write.
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
@@ -433,12 +449,18 @@ export class Hud {
       }
 
       const progress = age / DAMAGE_NUMBER_LIFETIME_MS;
-      const lifted = new Vector3(entry.world.x, entry.world.y + progress * 0.9, entry.world.z);
-      const projected = Vector3.Project(
-        lifted,
+      this.scratchWorld.set(entry.world.x, entry.world.y + progress * 0.9, entry.world.z);
+      params.camera.viewport.toGlobalToRef(
+        params.viewportWidth,
+        params.viewportHeight,
+        this.scratchViewport,
+      );
+      const projected = Vector3.ProjectToRef(
+        this.scratchWorld,
         Matrix.IdentityReadOnly,
         params.scene.getTransformMatrix(),
-        params.camera.viewport.toGlobal(params.viewportWidth, params.viewportHeight),
+        this.scratchViewport,
+        this.scratchProjected,
       );
 
       // Behind the camera or off screen: hide rather than drawing a mirrored artefact.

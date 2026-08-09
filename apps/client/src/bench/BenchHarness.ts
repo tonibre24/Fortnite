@@ -311,7 +311,7 @@ export class BenchHarness {
 
     this.effects.spawnTracer(origin, end);
     this.effects.spawnImpact(end, hit?.normal ?? null, 'world');
-    this.effects.spawnMuzzleFlash(bot.avatar.getMuzzleWorldPosition());
+    this.effects.spawnMuzzleFlash(bot.avatar.getMuzzleWorldPosition(), direction);
   }
 
   /**

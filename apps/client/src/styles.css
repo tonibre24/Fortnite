@@ -431,6 +431,22 @@ kbd {
   height: 3px;
 }
 
+/*
+ * An elimination gets its own marker: thicker, white-hot and rotated 45 degrees off the
+ * hit marker, so "hit" and "killed" are distinguishable at a glance mid-fight.
+ */
+.hitmarker.lethal {
+  width: 34px;
+  height: 34px;
+}
+
+.hitmarker.lethal span {
+  height: 4px;
+  width: 15px;
+  background: #fff;
+  box-shadow: 0 0 8px rgba(255, 90, 110, 0.9);
+}
+
 @keyframes hitmarker {
   0% {
     opacity: 1;
@@ -702,12 +718,23 @@ kbd {
   font-size: 25px;
 }
 
+/*
+ * Damage vignette. `--damage-intensity` is written from Hud.flashDamage() and scales
+ * both how far the red reaches in from the edges and how hard the hit reads, so a
+ * shotgun blast and a stray rifle round do not look identical.
+ */
 .damage-vignette {
+  --damage-intensity: 0.6;
   position: absolute;
   inset: 0;
   opacity: 0;
-  background: radial-gradient(circle at 50% 50%, transparent 45%, rgba(220, 40, 60, 0.55) 100%);
-  transition: opacity 260ms ease-out;
+  background: radial-gradient(
+    ellipse at 50% 50%,
+    transparent calc(52% - var(--damage-intensity) * 22%),
+    rgba(214, 34, 56, 0.62) 92%,
+    rgba(150, 16, 34, 0.78) 100%
+  );
+  transition: opacity 300ms cubic-bezier(0.2, 0, 0.4, 1);
 }
 
 .low-health {
@@ -761,6 +788,28 @@ kbd {
   border-right: 15px solid transparent;
   border-bottom: 22px solid rgba(255, 70, 90, 0.95);
   filter: drop-shadow(0 0 5px rgba(0, 0, 0, 0.8));
+}
+
+/*
+ * A soft arc behind the arrow head. The arrow alone tells you the direction; the arc
+ * gives it enough presence to register from peripheral vision, which is the whole point
+ * of a damage indicator.
+ */
+.damage-arrow::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: -96px;
+  width: 132px;
+  height: 34px;
+  margin-left: -66px;
+  border-radius: 66px 66px 0 0;
+  background: radial-gradient(
+    ellipse at 50% 100%,
+    rgba(255, 70, 90, 0.42) 0%,
+    rgba(255, 70, 90, 0.14) 55%,
+    transparent 78%
+  );
 }
 
 /* Elimination / respawn banner --------------------------------------------- */
