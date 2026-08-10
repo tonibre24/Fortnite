@@ -194,6 +194,13 @@ export class WorldView {
     this.group.add(mesh);
   }
 
+  /** Every procedural texture this view built, for the perf overlay's memory estimate. */
+  get textures(): THREE.Texture[] {
+    const list: THREE.Texture[] = [];
+    for (const set of this.textureSets) list.push(set.map, set.normalMap, set.roughnessMap);
+    return list;
+  }
+
   dispose(scene: THREE.Scene): void {
     scene.remove(this.group);
     for (const child of this.group.children) {

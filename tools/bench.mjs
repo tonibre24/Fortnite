@@ -19,7 +19,10 @@ const WARMUP_MS = Number(process.env.BENCH_WARMUP_MS ?? 12000);
 const SAMPLE_MS = Number(process.env.BENCH_SAMPLE_MS ?? 30000);
 const WIDTH = Number(process.env.BENCH_WIDTH ?? 1920);
 const HEIGHT = Number(process.env.BENCH_HEIGHT ?? 1080);
-const DEBUG_PORT = 9902;
+const DEBUG_PORT = Number(process.env.BENCH_DEBUG_PORT ?? 9902);
+/** Low/Medium/High/Ultra as 0-3. Unset runs whatever the client auto-benchmarks to. */
+const TIER = process.env.BENCH_TIER === undefined ? null : Number(process.env.BENCH_TIER);
+const TIER_NAMES = ['Low', 'Medium', 'High', 'Ultra'];
 
 const children = [];
 function launch(command, args, env) {
@@ -105,6 +108,19 @@ async function main() {
 
   await send('Page.enable');
   await send('Page.navigate', { url: `http://127.0.0.1:${PORT}/` });
+
+  if (TIER !== null) {
+    // Force the tier before the client's own auto-benchmark would otherwise
+    // settle on one - setTier() stops it from overriding this choice later.
+    for (let i = 0; i < 50; i++) {
+      const ready = await evalJs('typeof window.__perf !== "undefined"').catch(() => false);
+      if (ready) break;
+      await sleep(200);
+    }
+    await evalJs(`window.__perf.setTier(${TIER})`);
+    console.log(`forced tier: ${TIER_NAMES[TIER] ?? TIER}`);
+  }
+
   await sleep(WARMUP_MS);
 
   // Discard everything up to here: shader compilation and the first map build
@@ -122,14 +138,15 @@ async function main() {
   const mean = frames.reduce((a, b) => a + b, 0) / frames.length;
 
   console.log('scene');
+  console.log(`  tier             ${scene.tier}`);
   console.log(`  players          ${scene.players}`);
   console.log(`  draw calls       ${scene.draws}`);
   console.log(`  triangles        ${(scene.triangles / 1000).toFixed(0)}k`);
-  console.log(`  textures         ${scene.textures}`);
+  console.log(`  textures         ${scene.textures}  (${scene.textureMemoryMB.toFixed(1)} MB estimated resident)`);
   console.log(`  geometries       ${scene.geometries}`);
   console.log(`  shader programs  ${scene.programs}`);
   console.log(`  scenery props    ${scene.props}`);
-  console.log(`  shadows          ${scene.shadows ? 'on' : 'off'}`);
+  console.log(`  shadows          ${scene.shadows ? `on (${scene.cascades} cascades)` : 'off'}`);
   console.log('');
   console.log('frame time');
   console.log(`  frames sampled   ${frames.length}`);
@@ -153,6 +170,25 @@ async function main() {
   console.log('  floor and not a prediction of integrated-graphics performance.');
   console.log('  Draw calls, triangles and program count are hardware-independent');
   console.log('  and are the figures to judge the scene complexity on.');
+  console.log('');
+  console.log(
+    'RESULT_JSON: ' +
+      JSON.stringify({
+        tier: scene.tier,
+        players: scene.players,
+        draws: scene.draws,
+        trianglesK: Math.round(scene.triangles / 1000),
+        textureMemoryMB: Number(scene.textureMemoryMB.toFixed(2)),
+        props: scene.props,
+        shadows: scene.shadows,
+        cascades: scene.cascades,
+        meanMs: Number(mean.toFixed(2)),
+        p99Ms: Number(percentile(sorted, 0.99).toFixed(2)),
+        low1PctFps: Number((1000 / percentile(sorted, 0.99)).toFixed(1)),
+        cpuMeanMs: Number(cpuMean.toFixed(2)),
+        cpuP99Ms: Number(percentile(cpuSorted, 0.99).toFixed(2)),
+      }),
+  );
 
   ws.close();
   cleanup();

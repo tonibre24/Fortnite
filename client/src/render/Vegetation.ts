@@ -171,6 +171,11 @@ export class Vegetation {
     return this.count;
   }
 
+  /** For the perf overlay's memory estimate. */
+  get textures(): THREE.Texture[] {
+    return [this.leafMap];
+  }
+
   dispose(scene: THREE.Scene): void {
     scene.remove(this.group);
     this.mesh.dispose();

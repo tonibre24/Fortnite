@@ -217,6 +217,17 @@ function totalPropCount(): number {
   return (decor?.propCount ?? 0) + (vegetation?.propCount ?? 0) + (farmDressing?.propCount ?? 0);
 }
 
+/**
+ * Estimated resident GPU bytes for every procedural texture currently built -
+ * the ground/wall/roof PBR sets and the foliage cutout. Nothing here is a
+ * downloaded file: this is GPU memory, not the KTX2/Basis payload the brief
+ * also asks for, which is a separate figure covered in the final report.
+ */
+function textureMemoryBytes(): number {
+  const textures = [...(worldView?.textures ?? []), ...(vegetation?.textures ?? [])];
+  return renderer.estimateTextureMemory(textures);
+}
+
 function samplePerf(now: number, cpuMs: number, drawMs: number): void {
   if (lastFrameStart !== 0) {
     const delta = now - lastFrameStart;
@@ -238,7 +249,7 @@ function samplePerf(now: number, cpuMs: number, drawMs: number): void {
     `${(1000 / frame).toFixed(0)} fps  ${frame.toFixed(1)} ms/frame\n` +
     `${(cpuTotal / frameSamples).toFixed(2)} ms game  ${(drawTotal / frameSamples).toFixed(2)} ms draw\n` +
     `${renderer.drawCalls} draws  ${(renderer.triangles / 1000).toFixed(0)}k tris\n` +
-    `${renderer.textureCount} tex  ${renderer.geometryCount} geo  ${renderer.programCount} prog\n` +
+    `${renderer.textureCount} tex  ${renderer.geometryCount} geo  ${renderer.programCount} prog  ${(textureMemoryBytes() / 1048576).toFixed(1)}MB texmem\n` +
     `tier ${QUALITY_TIER_NAMES[renderer.qualityTier]}  shadows ${quality.shadows ? `${quality.cascades}csm` : 'off'}  props ${totalPropCount()}`;
   frameSamples = 0;
   frameTotal = 0;
@@ -273,6 +284,7 @@ hud.setPerfVisible(false);
     textures: renderer.textureCount,
     geometries: renderer.geometryCount,
     programs: renderer.programCount,
+    textureMemoryMB: textureMemoryBytes() / 1048576,
     tier: QUALITY_TIER_NAMES[renderer.qualityTier],
     shadows: renderer.quality.shadows,
     cascades: renderer.quality.cascades,
