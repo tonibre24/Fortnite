@@ -28,6 +28,7 @@ import {
   type GameMap,
   type Poi,
 } from '@br/shared';
+import { BlobShadowBatch } from './BlobShadowBatch.js';
 import { fieldBoundaryPoints } from './fieldBoundaries.js';
 
 interface Batch {
@@ -59,6 +60,7 @@ export class FarmDressing {
   private readonly cableGeometry: THREE.BufferGeometry;
   private readonly cableMaterial: THREE.LineBasicMaterial;
   private readonly cableLines: THREE.LineSegments;
+  private readonly shadows: BlobShadowBatch;
 
   constructor(
     scene: THREE.Scene,
@@ -69,11 +71,17 @@ export class FarmDressing {
     const rng = new Rng((map.seed ^ FARM_SEED_SALT ^ 0x2211) >>> 0);
     const edges = spanningEdges(map.pois);
 
+    let poleTotal = 0;
+    for (const [a, b] of edges) poleTotal += Math.floor(Math.hypot(b.x - a.x, b.z - a.z) / POLE_SPACING) + 1;
+    const hayBaleTotal = Math.round(HAY_BALE_COUNT * density);
+
     const fencePosts = fieldBoundaryPoints(map, FENCE_POST_SPACING).filter((p) => !p.isHedge);
     const fence = this.batch(new THREE.BoxGeometry(0.14, 1, 0.14), COLOR_FIELD_FENCE, fencePosts.length, true, setupCascadeMaterial);
+    this.shadows = new BlobShadowBatch(this.group, Math.max(1, fencePosts.length + poleTotal + hayBaleTotal));
     for (const p of fencePosts) {
       const y = terrainHeightAt(map.hills, p.x, p.z);
       this.placeBox(fence, p.x, y + 0.5, p.z, rng.range(0, Math.PI), 1, 1, 1, rng);
+      this.shadows.add(p.x, y, p.z, 0.35);
     }
 
     let trackTotal = 0;
@@ -81,8 +89,6 @@ export class FarmDressing {
     const track = this.batch(new THREE.BoxGeometry(1, 1, 1), COLOR_DIRT_TRACK, trackTotal, false, setupCascadeMaterial, 0.94, 0);
     for (const [a, b] of edges) this.layTrack(track, map, a, b, rng);
 
-    let poleTotal = 0;
-    for (const [a, b] of edges) poleTotal += Math.floor(Math.hypot(b.x - a.x, b.z - a.z) / POLE_SPACING) + 1;
     const posts = this.batch(new THREE.BoxGeometry(0.22, 1, 0.22), COLOR_POLE, poleTotal, true, setupCascadeMaterial);
     const crossarms = this.batch(new THREE.BoxGeometry(1, 0.14, 0.14), COLOR_POLE, poleTotal, true, setupCascadeMaterial);
     const cablePoints: number[] = [];
@@ -95,13 +101,14 @@ export class FarmDressing {
     this.cableLines.frustumCulled = false;
     this.group.add(this.cableLines);
 
-    const bales = this.batch(hayGeometry(), COLOR_HAY, Math.round(HAY_BALE_COUNT * density), true, setupCascadeMaterial, 0.95, 0);
-    this.scatterHayBales(bales, rng, map, Math.round(HAY_BALE_COUNT * density));
+    const bales = this.batch(hayGeometry(), COLOR_HAY, hayBaleTotal, true, setupCascadeMaterial, 0.95, 0);
+    this.scatterHayBales(bales, rng, map, hayBaleTotal);
 
     for (const batch of this.batches) {
       batch.mesh.instanceMatrix.needsUpdate = true;
       if (batch.mesh.instanceColor !== null) batch.mesh.instanceColor.needsUpdate = true;
     }
+    this.shadows.finalize();
     scene.add(this.group);
   }
 
@@ -197,6 +204,7 @@ export class FarmDressing {
       const y = terrainHeightAt(map.hills, x, z);
       this.placeBox(posts, x, y + POLE_HEIGHT / 2, z, angle, 1, POLE_HEIGHT, 1, rng);
       this.placeBox(crossarms, x, y + POLE_CROSSARM_HEIGHT, z, angle, POLE_CROSSARM_WIDTH, 1, 1, rng);
+      this.shadows.add(x, y, z, 0.6);
 
       const top = new THREE.Vector3(x, y + POLE_CROSSARM_HEIGHT + 0.1, z);
       if (prevTop !== null) addSaggingCable(cablePoints, prevTop, top);
@@ -217,6 +225,7 @@ export class FarmDressing {
       if (insideAnyBuilding(map.buildings, x, z)) continue;
       const y = terrainHeightAt(map.hills, x, z);
       this.placeBox(batch, x, y + HAY_BALE_RADIUS, z, rng.range(0, Math.PI * 2), 1, 1, 1, rng);
+      this.shadows.add(x, y, z, HAY_BALE_LENGTH * 0.42);
       placed += 1;
     }
   }
@@ -230,6 +239,7 @@ export class FarmDressing {
   dispose(scene: THREE.Scene): void {
     scene.remove(this.group);
     for (const batch of this.batches) batch.mesh.dispose();
+    this.shadows.dispose();
     for (const geometry of this.geometries) geometry.dispose();
     for (const material of this.materials) material.dispose();
     this.cableGeometry.dispose();

@@ -21,6 +21,7 @@ import {
   type GameMap,
   type Poi,
 } from '@br/shared';
+import { BlobShadowBatch } from './BlobShadowBatch.js';
 import { fieldBoundaryPoints } from './fieldBoundaries.js';
 
 /**
@@ -39,6 +40,7 @@ export class Vegetation {
   private readonly leafMap: THREE.CanvasTexture;
   private readonly material: THREE.MeshStandardMaterial;
   private readonly mesh: THREE.InstancedMesh;
+  private readonly shadows: BlobShadowBatch;
   private readonly windUniform = { value: 0 };
   private count = 0;
 
@@ -72,12 +74,14 @@ export class Vegetation {
     this.mesh.frustumCulled = false;
     this.mesh.count = 0;
     this.group.add(this.mesh);
+    this.shadows = new BlobShadowBatch(this.group, Math.max(1, capacity));
 
     this.scatterShrubs(rng, map, scatterCount);
     this.placeHedges(rng, map, hedgePoints);
 
     this.mesh.instanceMatrix.needsUpdate = true;
     if (this.mesh.instanceColor !== null) this.mesh.instanceColor.needsUpdate = true;
+    this.shadows.finalize();
     scene.add(this.group);
   }
 
@@ -117,6 +121,7 @@ export class Vegetation {
 
       base.copy(warm).lerp(cool, rng.range(0, 1));
       this.place(matrix, base, tint, rng);
+      this.shadows.add(x, y, z, width * 0.38);
       placed += 1;
     }
   }
@@ -146,6 +151,7 @@ export class Vegetation {
 
       base.copy(warm).lerp(cool, rng.range(0, 1));
       this.place(matrix, base, tint, rng);
+      this.shadows.add(p.x, y, p.z, width * 0.45);
     }
   }
 
@@ -179,6 +185,7 @@ export class Vegetation {
   dispose(scene: THREE.Scene): void {
     scene.remove(this.group);
     this.mesh.dispose();
+    this.shadows.dispose();
     this.geometry.dispose();
     this.material.dispose();
     this.leafMap.dispose();

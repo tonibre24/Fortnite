@@ -534,6 +534,17 @@ export const HAY_BALE_RADIUS = 0.55;
 export const HAY_BALE_LENGTH = 1.4;
 export const COLOR_HAY = 0xc9a339;
 
+/**
+ * Cheap fake ground-contact shadows: a soft round decal multiplied into the
+ * ground under small static props (shrubs, hedges, hay bales, fence posts,
+ * poles). With thousands of them on a low-contrast ground and no per-prop
+ * shadow map coverage to spare, the alternative is every one of them reading
+ * as if it were floating.
+ */
+export const BLOB_SHADOW_DARKNESS = 0.45;
+/** Lifts the decal just clear of the ground mesh so it never z-fights. */
+export const BLOB_SHADOW_Y_OFFSET = 0.02;
+
 // ----------------------------------------------------------------------- vfx
 
 /**
