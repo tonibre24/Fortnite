@@ -1,5 +1,13 @@
 import * as THREE from 'three';
-import { COLOR_STORM, MAP_HALF, STORM_WALL_HEIGHT } from '@br/shared';
+import {
+  COLOR_STORM_WALL,
+  COLOR_STORM_WALL_EDGE,
+  FOG_FAR,
+  FOG_NEAR,
+  FOG_TINT,
+  MAP_HALF,
+  STORM_WALL_HEIGHT,
+} from '@br/shared';
 
 /**
  * The storm as a shader rather than a flat translucent cylinder.
@@ -36,6 +44,9 @@ const FRAGMENT = /* glsl */ `
 
   uniform vec3 stormColor;
   uniform vec3 edgeColor;
+  uniform vec3 fogColor;
+  uniform float fogNear;
+  uniform float fogFar;
   uniform float time;
   uniform float opacity;
 
@@ -79,9 +90,17 @@ const FRAGMENT = /* glsl */ `
     vec3 color = mix(stormColor, edgeColor, fresnel * 0.7 + lead * 0.6);
     color += edgeColor * n * 0.25;
 
+    // The same linear distance fog the rest of the scene uses, applied by
+    // hand since this is a raw ShaderMaterial - without it the wall was a
+    // flat, saturated cutout at any range, instead of the softened, hazy
+    // front a real distant storm would read as.
+    float fogFactor = clamp((length(cameraPosition - vWorldPosition) - fogNear) / (fogFar - fogNear), 0.0, 1.0);
+    color = mix(color, fogColor, fogFactor * 0.7);
+
     // Fades out towards the top so the wall has no hard upper edge against sky.
     float height = 1.0 - smoothstep(0.45, 1.0, vUv.y);
     float alpha = opacity * (0.30 + n * 0.35 + fresnel * 0.5 + lead * 0.55) * height;
+    alpha *= 1.0 - fogFactor * 0.45;
 
     gl_FragColor = vec4(color, clamp(alpha, 0.0, 1.0));
   }
@@ -103,8 +122,11 @@ export class StormWall {
       depthWrite: false,
       side: THREE.DoubleSide,
       uniforms: {
-        stormColor: { value: new THREE.Color(COLOR_STORM) },
-        edgeColor: { value: new THREE.Color(0xd9a8ff) },
+        stormColor: { value: new THREE.Color(COLOR_STORM_WALL) },
+        edgeColor: { value: new THREE.Color(COLOR_STORM_WALL_EDGE) },
+        fogColor: { value: new THREE.Color(FOG_TINT) },
+        fogNear: { value: FOG_NEAR },
+        fogFar: { value: FOG_FAR },
         time: { value: 0 },
         opacity: { value: 1 },
       },

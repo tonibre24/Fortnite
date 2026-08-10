@@ -210,6 +210,15 @@ export const COLOR_BOUNDARY = 0x6a4b8a;
 export const COLOR_SELF = 0x3f7fd0;
 export const COLOR_ENEMY = 0xd03030;
 export const COLOR_STORM = 0x8a3fd0;
+/**
+ * The 3D storm wall gets its own, more muted pair of colours - kept separate
+ * from COLOR_STORM (which stays saturated for the minimap ring, where it
+ * needs to read at a glance against the map's green) so the environment
+ * doesn't show a flat, saturated violet wedge against the grey-mauve overcast
+ * palette everything else in the scene is built from.
+ */
+export const COLOR_STORM_WALL = 0x5a476b;
+export const COLOR_STORM_WALL_EDGE = 0xd4c4d4;
 
 // ------------------------------------------------------------------ combat
 
