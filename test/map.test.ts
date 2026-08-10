@@ -2,12 +2,14 @@ import { describe, expect, it } from 'vitest';
 import {
   BUILDING_STOREY_HEIGHT,
   Button,
+  DECOR_SEED_SALT,
   GROUND_Y,
   MAP_HALF,
   MAX_PLAYERS,
   PLAYER_HEIGHT,
   PLAYER_RADIUS,
   POI_COUNT,
+  Rng,
   SPAWN_RING_RADIUS,
   STEP_HEIGHT,
   TICK_DT,
@@ -292,5 +294,39 @@ describe('spawns', () => {
       if (isBlocked(landed, PLAYER_RADIUS, PLAYER_HEIGHT, map.world)) stuck += 1;
     }
     expect(stuck).toBe(0);
+  });
+});
+
+/**
+ * The visual overhaul adds client-side scenery derived from the map seed. It
+ * must stay decoration: the collision data is shared with the server, and every
+ * client is checked against a hash of it on join. These lock down the two ways
+ * that could silently break.
+ */
+describe('decoration cannot reach the map', () => {
+  it('hashes a map to the same value regardless of how often it is built', () => {
+    const a = generateMap(0x1234);
+    const b = generateMap(0x1234);
+    expect(hashMap(a)).toBe(hashMap(b));
+    expect(a.boxes.length).toBe(b.boxes.length);
+  });
+
+  it('derives scenery from a stream that cannot collide with map generation', () => {
+    // The decoration salt must actually change the stream, or scenery would
+    // consume the same numbers the map does and the two could drift together.
+    const plain = new Rng(0x1234);
+    const salted = new Rng((0x1234 ^ DECOR_SEED_SALT) >>> 0);
+    const first = [plain.nextUint32(), plain.nextUint32(), plain.nextUint32()];
+    const second = [salted.nextUint32(), salted.nextUint32(), salted.nextUint32()];
+    expect(second).not.toEqual(first);
+  });
+
+  it('keeps the ground a single collider however it is drawn', () => {
+    // WorldView splits the ground slab into GROUND_TILES^2 tiles for looks. If
+    // that ever leaked into generation, collision would gain thousands of boxes.
+    const map = generateMap(0x99);
+    const wide = map.boxes.filter((b) => b.maxX - b.minX > MAP_HALF && b.maxZ - b.minZ > MAP_HALF);
+    expect(wide).toHaveLength(1);
+    expect(wide[0]!.solid).toBe(true);
   });
 });

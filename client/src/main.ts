@@ -31,6 +31,7 @@ import { GameClient } from './game/GameClient.js';
 import { InputSampler } from './input/InputSampler.js';
 import { PlayerView } from './render/PlayerView.js';
 import { Renderer } from './render/Renderer.js';
+import { Decor } from './render/Decor.js';
 import { LootView } from './render/LootView.js';
 import { RoundView } from './render/RoundView.js';
 import { Tracers } from './render/Tracers.js';
@@ -87,6 +88,7 @@ hud.setVolume(audio.volume);
 hud.onVolumeChange = (value) => audio.setVolume(value);
 
 let worldView: WorldView | null = null;
+let decor: Decor | null = null;
 let worldVersion = -1;
 /** Who the camera follows once the local player is out of the round. */
 let spectating = 0;
@@ -313,7 +315,9 @@ function frame(): void {
   // Rebuilt whenever a new round hands us a new map.
   if (client.map !== null && worldVersion !== client.mapVersion) {
     worldView?.dispose(renderer.scene);
+    decor?.dispose(renderer.scene);
     worldView = new WorldView(renderer.scene, client.map);
+    decor = new Decor(renderer.scene, client.map);
     worldVersion = client.mapVersion;
   }
 

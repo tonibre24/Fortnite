@@ -366,6 +366,26 @@ export const SHADOW_NORMAL_BIAS = 0.02;
 /** Per-instance hue jitter, so repeated props do not read as tiled. */
 export const PROP_TINT_JITTER = 0.11;
 
+/**
+ * Client-side scenery. Derived from the map seed on a salted stream, so every
+ * client draws the same props without any of it reaching the collision data
+ * the server shares - decoration must never move the seeded map hash.
+ */
+export const DECOR_SEED_SALT = 0x5cede0c0;
+export const DECOR_GRASS_COUNT = 4200;
+export const DECOR_PEBBLE_COUNT = 900;
+export const DECOR_FENCE_CHANCE = 0.35;
+export const COLOR_GRASS_A = 0x6f9c46;
+export const COLOR_GRASS_B = 0x8aa84e;
+export const COLOR_PEBBLE = 0x8d8b84;
+
+/**
+ * The ground slab is one enormous box, which reads as a flat plane of a single
+ * colour. It is drawn instead as a grid of tinted tiles - purely a rendering
+ * choice, the collider stays exactly one box.
+ */
+export const GROUND_TILES = 44;
+
 // --------------------------------------------------------------------- audio
 
 /** Master volume before the player touches the slider, and where it persists. */
