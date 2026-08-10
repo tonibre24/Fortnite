@@ -1,5 +1,6 @@
 import { Axis, type CollisionWorld, sweepAxis } from './collision.js';
 import {
+  AIM_SPEED_MULTIPLIER,
   AIR_ACCEL,
   AIR_FRICTION,
   COYOTE_TICKS,
@@ -152,8 +153,12 @@ export function stepMovement(state: PlayerState, cmd: InputCommand, world: Colli
   const wishZ = wish.z;
   const wishing = wish.active;
 
-  const sprinting = wishing && (cmd.buttons & Button.Sprint) !== 0;
-  const targetSpeed = sprinting ? SPRINT_SPEED : WALK_SPEED;
+  // Aiming overrides sprint rather than combining with it - matches how the
+  // viewmodel and FOV only have one eased target to move towards, and it
+  // means a player cannot use Aim to sneak a burst of extra top speed.
+  const aiming = (cmd.buttons & Button.Aim) !== 0;
+  const sprinting = wishing && !aiming && (cmd.buttons & Button.Sprint) !== 0;
+  const targetSpeed = (sprinting ? SPRINT_SPEED : WALK_SPEED) * (aiming ? AIM_SPEED_MULTIPLIER : 1);
 
   // --- horizontal velocity: friction, then acceleration ---------------------
   const friction = onGround ? GROUND_FRICTION : AIR_FRICTION;
@@ -215,10 +220,12 @@ export function stepMovement(state: PlayerState, cmd: InputCommand, world: Colli
   state.yawQ = cmd.yawQ;
   state.pitchQ = cmd.pitchQ;
   state.flags =
-    (state.flags & ~(StateFlag.OnGround | StateFlag.Sprinting | StateFlag.JumpLatched)) |
+    (state.flags &
+      ~(StateFlag.OnGround | StateFlag.Sprinting | StateFlag.JumpLatched | StateFlag.Aiming)) |
     (nowOnGround ? StateFlag.OnGround : 0) |
     (sprinting ? StateFlag.Sprinting : 0) |
-    (nextJumpLatched ? StateFlag.JumpLatched : 0);
+    (nextJumpLatched ? StateFlag.JumpLatched : 0) |
+    (aiming ? StateFlag.Aiming : 0);
 
   // Collapse to float32 so wire == memory.
   state.pos.x = f32(state.pos.x);

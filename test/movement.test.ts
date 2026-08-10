@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  AIM_SPEED_MULTIPLIER,
   Button,
   CollisionWorld,
   GRAVITY,
@@ -104,6 +105,38 @@ describe('stepMovement', () => {
     const sprintSpeed = Math.hypot(sprinter.vel.x, sprinter.vel.z);
     expect(sprintSpeed).toBeGreaterThan(SPRINT_SPEED - 0.35);
     expect(sprintSpeed).toBeLessThanOrEqual(SPRINT_SPEED + 0.01);
+  });
+
+  /**
+   * Aiming has to slow the player identically on client prediction and server
+   * authority, because it is the same stepMovement on both sides - there is no
+   * separate "aim slowdown" implementation to keep in sync.
+   */
+  it('slows to AIM_SPEED_MULTIPLIER of walk speed while aiming', () => {
+    const aimer = spawn();
+    run(aimer, FLAT_GROUND, 60, Button.Forward | Button.Aim);
+    const aimSpeed = Math.hypot(aimer.vel.x, aimer.vel.z);
+    const expected = WALK_SPEED * AIM_SPEED_MULTIPLIER;
+    expect(aimSpeed).toBeGreaterThan(expected - 0.35);
+    expect(aimSpeed).toBeLessThanOrEqual(expected + 0.01);
+  });
+
+  it('lets aiming override sprint rather than combining with it', () => {
+    const aimer = spawn();
+    run(aimer, FLAT_GROUND, 60, Button.Forward | Button.Sprint | Button.Aim);
+    const aimSpeed = Math.hypot(aimer.vel.x, aimer.vel.z);
+    const expected = WALK_SPEED * AIM_SPEED_MULTIPLIER;
+    expect(aimSpeed).toBeLessThan(SPRINT_SPEED * AIM_SPEED_MULTIPLIER - 0.01);
+    expect(aimSpeed).toBeGreaterThan(expected - 0.35);
+    expect(aimSpeed).toBeLessThanOrEqual(expected + 0.01);
+  });
+
+  it('sets StateFlag.Aiming while the button is held and clears it once released', () => {
+    const state = spawn();
+    stepMovement(state, cmd(1, Button.Forward | Button.Aim), FLAT_GROUND, TICK_DT);
+    expect(state.flags & StateFlag.Aiming).toBeTruthy();
+    stepMovement(state, cmd(2, Button.Forward), FLAT_GROUND, TICK_DT);
+    expect(state.flags & StateFlag.Aiming).toBeFalsy();
   });
 
   it('does not let diagonal input move faster than straight input', () => {

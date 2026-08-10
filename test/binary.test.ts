@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BinaryReader, BinaryWriter } from '@br/shared';
+import { BinaryReader, BinaryWriter, EventType, readEvent, writeEvent, type ShotEvent } from '@br/shared';
 
 describe('binary reader/writer', () => {
   it('round-trips every scalar type', () => {
@@ -45,5 +45,31 @@ describe('binary reader/writer', () => {
     const r = new BinaryReader(view);
     expect(r.u32()).toBe(0xdeadbeef);
     expect(r.str()).toBe('offset');
+  });
+
+  /**
+   * The aiming bit on a Shot event has to survive the wire, or a client
+   * watching someone else fire would draw the wrong spread cone for a shot the
+   * server resolved as aimed.
+   */
+  it('round-trips a Shot event with the aiming flag either way', () => {
+    const base: Omit<ShotEvent, 'aiming'> = {
+      type: EventType.Shot,
+      shooterId: 7,
+      seq: 4294967000,
+      weapon: 42,
+      x: 1.5,
+      y: -2.25,
+      z: 300.75,
+      yawQ: 12345,
+      pitchQ: -6789,
+    };
+
+    for (const aiming of [true, false]) {
+      const w = new BinaryWriter(32);
+      writeEvent(w, { ...base, aiming });
+      const r = new BinaryReader(w.finish());
+      expect(readEvent(r)).toEqual({ ...base, aiming });
+    }
   });
 });

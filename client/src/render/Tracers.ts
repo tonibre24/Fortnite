@@ -4,6 +4,7 @@ import {
   TRACER_LIFETIME_MS,
   WEAPON_MAX_RANGE,
   aimDirection,
+  effectiveSpread,
   raycastWorld,
   spreadDirection,
   unpackWeapon,
@@ -58,8 +59,9 @@ export class Tracers {
     const stats = weaponStats(weapon.cls);
 
     aimDirection(event.yawQ, event.pitchQ, aim);
+    const spread = effectiveSpread(stats.spread, event.aiming);
     for (let i = 0; i < stats.pellets; i++) {
-      spreadDirection(aim, stats.spread, event.shooterId, event.seq, i, pellet);
+      spreadDirection(aim, spread, event.shooterId, event.seq, i, pellet);
       const distance = raycastWorld(
         map.world,
         event.x,

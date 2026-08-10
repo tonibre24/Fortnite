@@ -116,6 +116,14 @@ export const MAX_RESOLVE_PASSES = 4;
 /** Saturation value for the "ticks since grounded" counter (fits in a byte). */
 export const SINCE_GROUNDED_MAX = 255;
 
+/**
+ * Aiming down sights. One shared multiplier rather than per-weapon tuning -
+ * stepMovement applies it identically on client prediction and server
+ * authority, so aiming never needs reconciling any harder than sprinting
+ * already does. Aiming overrides sprint rather than combining with it.
+ */
+export const AIM_SPEED_MULTIPLIER = 0.55;
+
 // ------------------------------------------------------------ map generation
 
 /**
@@ -229,6 +237,14 @@ export const KILL_FEED_MS = 6000;
 
 /** Damage indicator arc lifetime. */
 export const DAMAGE_FLASH_MS = 400;
+
+/**
+ * How much aiming down sights tightens the cone. Applied by
+ * `effectiveSpread()`, the one function both the server's hit resolution and
+ * the client's tracer rendering call - so a tighter cone from aiming is never
+ * a client-only visual, it is what actually got hit.
+ */
+export const ADS_SPREAD_MULTIPLIER = 0.4;
 
 // -------------------------------------------------------------------- loot
 

@@ -250,6 +250,14 @@ export interface ShotEvent {
   z: number;
   yawQ: number;
   pitchQ: number;
+  /**
+   * Whether the shooter was aiming down sights. Carried on the event, not
+   * inferred client-side, so every observer's tracer reproduces the exact
+   * cone effectiveSpread() gave the server - a client guessing "were they
+   * aiming?" from anything else could draw a cone that does not match what
+   * actually got hit.
+   */
+  aiming: boolean;
 }
 
 export interface HitEvent {
@@ -289,6 +297,7 @@ export function writeEvent(w: BinaryWriter, event: GameEvent): void {
       w.f32(event.z);
       w.u16(event.yawQ);
       w.i16(event.pitchQ);
+      w.u8(event.aiming ? 1 : 0);
       break;
     case EventType.Hit:
       w.u16(event.victimId);
@@ -323,6 +332,7 @@ export function readEvent(r: BinaryReader): GameEvent | null {
         z: r.f32(),
         yawQ: r.u16(),
         pitchQ: r.i16(),
+        aiming: r.u8() !== 0,
       };
     case EventType.Hit: {
       const victimId = r.u16();

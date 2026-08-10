@@ -19,6 +19,7 @@ import {
   COLOR_GROUND,
   WEAPON_MAX_RANGE,
   aimDirection,
+  effectiveSpread,
   raycastWorld,
   spreadDirection,
   isConsumableKind,
@@ -242,8 +243,9 @@ function shotEffects(event: GameEvent & { type: typeof EventType.Shot }, now: nu
   vfx.muzzleFlash(event.x, event.y, event.z, 0.35 + stats.pellets * 0.06, now);
 
   aimDirection(event.yawQ, event.pitchQ, aimVec);
+  const spread = effectiveSpread(stats.spread, event.aiming);
   for (let i = 0; i < stats.pellets; i++) {
-    spreadDirection(aimVec, stats.spread, event.shooterId, event.seq, i, pelletVec);
+    spreadDirection(aimVec, spread, event.shooterId, event.seq, i, pelletVec);
     const distance = raycastWorld(
       client.map.world,
       event.x,

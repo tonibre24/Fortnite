@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  ADS_SPREAD_MULTIPLIER,
   Button,
   CollisionWorld,
   GROUND_Y,
@@ -18,6 +19,9 @@ import {
   applyDamage,
   box,
   damageAtRange,
+  decodeSnapshot,
+  effectiveSpread,
+  EventType,
   packWeapon,
   quantizePitch,
   quantizeYaw,
@@ -36,10 +40,16 @@ import { giveWeapon } from '../server/src/Loot.js';
 
 const SEED = 0xc0ffee;
 
-function fireCommand(seq: number, yaw: number, pitch: number, renderTick: number): InputCommand {
+function fireCommand(
+  seq: number,
+  yaw: number,
+  pitch: number,
+  renderTick: number,
+  extraButtons = 0,
+): InputCommand {
   return {
     seq,
-    buttons: Button.Fire,
+    buttons: Button.Fire | extraButtons,
     yawQ: quantizeYaw(yaw),
     pitchQ: quantizePitch(pitch),
     renderTick,
@@ -214,6 +224,33 @@ describe('spread', () => {
   });
 });
 
+describe('effectiveSpread', () => {
+  it('tightens by exactly ADS_SPREAD_MULTIPLIER while aiming', () => {
+    expect(effectiveSpread(0.08, true)).toBeCloseTo(0.08 * ADS_SPREAD_MULTIPLIER, 10);
+  });
+
+  it('passes the base spread through unchanged when not aiming', () => {
+    expect(effectiveSpread(0.08, false)).toBe(0.08);
+  });
+
+  it('is the single source both sides multiply by, not a fork', () => {
+    // Same seed inputs, computed once through the shared function rather than
+    // through two copies of "if aiming, times 0.4" - if a caller ever forked
+    // this, this is the assertion that would catch it drifting.
+    const dir = vec3();
+    aimDirection(quantizeYaw(0.3), quantizePitch(0), dir);
+    const aimed = spreadDirection(dir, effectiveSpread(0.1, true), 5, 9, 0, vec3());
+    const unaimed = spreadDirection(dir, effectiveSpread(0.1, false), 5, 9, 0, vec3());
+    // Not exactly proportional - the radius that scales linearly with spread
+    // feeds a normalised vector, which is a trig function of radius, not
+    // radius itself - so this checks the two agree to five decimal places
+    // rather than bit-for-bit.
+    const aimedAngle = Math.acos(Math.min(1, aimed.x * dir.x + aimed.y * dir.y + aimed.z * dir.z));
+    const unaimedAngle = Math.acos(Math.min(1, unaimed.x * dir.x + unaimed.y * dir.y + unaimed.z * dir.z));
+    expect(aimedAngle).toBeCloseTo(unaimedAngle * ADS_SPREAD_MULTIPLIER, 5);
+  });
+});
+
 /**
  * The server owns hit detection, so these drive the real `World` rather than
  * the pieces underneath it.
@@ -340,6 +377,36 @@ describe('server-side shooting', () => {
     shooter.enqueue([fireCommand(1, 0, aimAt(0, -10), 0)]);
     world.step();
     expect(target.state.health).toBe(before);
+  });
+
+  /**
+   * The wiring, not the maths: that a command carrying Button.Aim actually
+   * makes it into the ShotEvent every observer decodes, all the way through
+   * the real snapshot the server sends. The maths of what aiming does to the
+   * cone is covered separately by the effectiveSpread tests above.
+   */
+  it('marks a Shot event aiming when the command that fired it was aiming', () => {
+    const { world, shooter } = twoPlayers();
+    const pitch = aimAt(0, -10);
+
+    shooter.enqueue([fireCommand(1, 0, pitch, 0, Button.Aim)]);
+    world.step();
+    const aimed = decodeSnapshot(world.snapshotFor(shooter), () => null)!;
+    const aimedShot = aimed.events.find((e) => e.type === EventType.Shot);
+    expect(aimedShot?.aiming).toBe(true);
+
+    // A fresh shooter so the fire-interval cooldown from the first shot does
+    // not swallow this one.
+    const other = world.addPlayer(3, 'unaimed');
+    other.state.pos.x = 5;
+    other.state.pos.y = GROUND_Y;
+    other.state.pos.z = 0;
+    giveWeapon(other.state, WeaponClass.Rifle, Rarity.Grey, 0);
+    other.enqueue([fireCommand(1, 0, aimAt(0, -10), 0)]);
+    world.step();
+    const plain = decodeSnapshot(world.snapshotFor(other), () => null)!;
+    const plainShot = plain.events.find((e) => e.type === EventType.Shot);
+    expect(plainShot?.aiming).toBe(false);
   });
 });
 

@@ -7,6 +7,7 @@ import {
   aimDirection,
   applyDamage,
   damageAtRange,
+  effectiveSpread,
   eyePosition,
   headshotDamage,
   raycastWorld,
@@ -86,6 +87,12 @@ function fireShot(
 ): void {
   const state = shooter.state;
   const stats = weaponStats(cls);
+  // Read from the command that is actually firing, not from state.flags: the
+  // flag reflects the movement step that already ran this tick, but pulling
+  // the input the shot itself carries keeps this in lockstep with whichever
+  // command is being resolved, including replayed ones.
+  const aiming = (cmd.buttons & Button.Aim) !== 0;
+  const spread = effectiveSpread(stats.spread, aiming);
 
   eyePosition(state.pos, eye);
   aimDirection(cmd.yawQ, cmd.pitchQ, aim);
@@ -101,6 +108,7 @@ function fireShot(
       z: eye.z,
       yawQ: cmd.yawQ,
       pitchQ: cmd.pitchQ,
+      aiming,
     },
     0,
   );
@@ -111,7 +119,7 @@ function fireShot(
 
   const hits = new Map<number, PelletHit>();
   for (let i = 0; i < stats.pellets; i++) {
-    spreadDirection(aim, stats.spread, shooter.id, cmd.seq, i, pellet);
+    spreadDirection(aim, spread, shooter.id, cmd.seq, i, pellet);
     const hit = tracePellet(world, shooter, rewindTick, pellet, cls, rarity);
     if (hit === null) continue;
     const existing = hits.get(hit.victim.id);

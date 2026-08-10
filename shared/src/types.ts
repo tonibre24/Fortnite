@@ -14,6 +14,7 @@ export const Button = {
   Fire: 1 << 7,
   Reload: 1 << 8,
   Interact: 1 << 9,
+  Aim: 1 << 10,
 } as const;
 
 export type ButtonName = keyof typeof Button;
@@ -45,6 +46,8 @@ export const StateFlag = {
   Sprinting: 1 << 1,
   Alive: 1 << 2,
   JumpLatched: 1 << 3,
+  /** Aiming down sights - set by the same shared stepMovement every player runs. */
+  Aiming: 1 << 4,
 } as const;
 
 /**

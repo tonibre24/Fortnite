@@ -1,5 +1,6 @@
 import { type Box, rayBox } from './collision.js';
 import {
+  ADS_SPREAD_MULTIPLIER,
   HEAD_HEIGHT,
   HEADSHOT_MULTIPLIER,
   PLAYER_EYE_HEIGHT,
@@ -29,6 +30,17 @@ export function aimDirection(yawQ: number, pitchQ: number, out: Vec3): Vec3 {
   out.y = Math.sin(pitch);
   out.z = -Math.cos(yaw) * cosPitch;
   return out;
+}
+
+/**
+ * The one place aiming changes a weapon's cone. Both the server's hit
+ * resolution and the client's tracer/VFX rendering call this rather than
+ * each carrying their own "if aiming, multiply" - so there is exactly one
+ * definition of what aiming does to spread, not a client copy that could
+ * drift from the server's.
+ */
+export function effectiveSpread(baseSpread: number, aiming: boolean): number {
+  return aiming ? baseSpread * ADS_SPREAD_MULTIPLIER : baseSpread;
 }
 
 /**
