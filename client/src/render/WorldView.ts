@@ -26,7 +26,11 @@ export class WorldView {
   private readonly geometry = new THREE.BoxGeometry(1, 1, 1);
   private readonly materials: THREE.Material[] = [];
 
-  constructor(scene: THREE.Scene, map: GameMap) {
+  constructor(
+    scene: THREE.Scene,
+    map: GameMap,
+    private readonly setupCascadeMaterial: (material: THREE.Material) => void,
+  ) {
     // Same salt as the decoration stream, drawn after it so the two never
     // interleave; both are reproducible from the map seed alone.
     const rng = new Rng((map.seed ^ DECOR_SEED_SALT ^ 0x1234) >>> 0);
@@ -51,7 +55,8 @@ export class WorldView {
     const tint = new THREE.Color();
 
     for (const [color, boxes] of byColor) {
-      const material = new THREE.MeshLambertMaterial({ color: 0xffffff, flatShading: true });
+      const material = new THREE.MeshStandardMaterial({ color: 0xffffff, flatShading: true, roughness: 0.92, metalness: 0 });
+      this.setupCascadeMaterial(material);
       this.materials.push(material);
       const mesh = new THREE.InstancedMesh(this.geometry, material, boxes.length);
       base.setHex(color);
@@ -97,7 +102,8 @@ export class WorldView {
     // the grid immediately. Two octaves of value noise give neighbouring tiles
     // similar colours, so the variation becomes patches of ground instead.
     const noise = valueNoise(rng);
-    const material = new THREE.MeshLambertMaterial({ color: 0xffffff, flatShading: true });
+    const material = new THREE.MeshStandardMaterial({ color: 0xffffff, flatShading: true, roughness: 0.96, metalness: 0 });
+    this.setupCascadeMaterial(material);
     this.materials.push(material);
     const tiles = GROUND_TILES * GROUND_TILES;
     const mesh = new THREE.InstancedMesh(this.geometry, material, tiles);

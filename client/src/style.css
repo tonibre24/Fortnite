@@ -351,7 +351,7 @@ body {
 #killfeed {
   position: absolute;
   right: 24px;
-  top: 274px;
+  top: 298px;
   /* Bounded, or several entries at once flow into one wide strip across the
      screen instead of stacking. */
   width: 380px;
@@ -486,4 +486,33 @@ body {
   min-width: 26px;
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+
+#quality {
+  position: absolute;
+  right: 24px;
+  top: 266px;
+  width: 190px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  opacity: 0.75;
+  pointer-events: auto;
+}
+
+#quality label {
+  letter-spacing: 0.06em;
+}
+
+#quality select {
+  pointer-events: auto;
+  flex: 1;
+  background: rgba(8, 10, 14, 0.6);
+  color: #e8ecf1;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 2px;
+  font: inherit;
+  padding: 2px 4px;
+  cursor: pointer;
 }

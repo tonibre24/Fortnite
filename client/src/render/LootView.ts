@@ -43,7 +43,13 @@ export class LootView {
       const chest = bucket === RARITY_COUNT;
       const mesh = new THREE.InstancedMesh(
         chest ? this.chestGeometry : this.itemGeometry,
-        new THREE.MeshLambertMaterial({ color: chest ? CHEST_COLOR : RARITY_COLORS[bucket] }),
+        // Loot stays a touch glossier than terrain - it is a gameplay marker
+        // first, and a little shine is what makes it pop out of the grass.
+        new THREE.MeshStandardMaterial({
+          color: chest ? CHEST_COLOR : RARITY_COLORS[bucket],
+          roughness: 0.4,
+          metalness: 0.1,
+        }),
         capacity,
       );
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);

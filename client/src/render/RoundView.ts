@@ -30,7 +30,7 @@ export class RoundView {
   constructor(scene: THREE.Scene) {
     this.bus = new THREE.Mesh(
       new THREE.BoxGeometry(BUS_SIZE_X, BUS_SIZE_Y, BUS_SIZE_Z),
-      new THREE.MeshLambertMaterial({ color: BUS_COLOR }),
+      new THREE.MeshStandardMaterial({ color: BUS_COLOR, roughness: 0.55, metalness: 0.35 }),
     );
     this.bus.visible = false;
     scene.add(this.bus);

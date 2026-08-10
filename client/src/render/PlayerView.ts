@@ -46,7 +46,7 @@ interface Gait {
 
 export class PlayerView {
   private readonly group = new THREE.Group();
-  private readonly material: THREE.MeshLambertMaterial;
+  private readonly material: THREE.MeshStandardMaterial;
   private readonly parts: Part[] = [];
   private readonly torso: Part;
   private readonly head: Part;
@@ -65,8 +65,17 @@ export class PlayerView {
   private readonly offset = new THREE.Vector3();
   private readonly up = new THREE.Vector3(0, 1, 0);
 
-  constructor(private readonly scene: THREE.Scene) {
-    this.material = new THREE.MeshLambertMaterial({ color: COLOR_ENEMY, flatShading: true });
+  constructor(
+    private readonly scene: THREE.Scene,
+    setupCascadeMaterial: (material: THREE.Material) => void,
+  ) {
+    this.material = new THREE.MeshStandardMaterial({
+      color: COLOR_ENEMY,
+      flatShading: true,
+      roughness: 0.75,
+      metalness: 0,
+    });
+    setupCascadeMaterial(this.material);
 
     const h = PLAYER_HEIGHT;
     this.torso = this.part(

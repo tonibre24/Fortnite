@@ -1,47 +1,87 @@
 import * as THREE from 'three';
+import { CSM } from 'three/examples/jsm/csm/CSM.js';
+import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
+import { SSAOPass } from 'three/examples/jsm/postprocessing/SSAOPass.js';
+import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
+import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
+import { FXAAShader } from 'three/examples/jsm/shaders/FXAAShader.js';
 import {
+  BLOOM_RADIUS,
+  BLOOM_STRENGTH,
+  BLOOM_THRESHOLD,
+  EXPOSURE,
   FOG_FAR,
   FOG_NEAR,
+  FOG_TINT,
   HEMI_GROUND_COLOR,
   HEMI_INTENSITY,
   HEMI_SKY_COLOR,
   PLAYER_EYE_HEIGHT,
   SHADOW_BIAS,
   SHADOW_DEPTH,
-  SHADOW_MAP_SIZE,
   SHADOW_NORMAL_BIAS,
-  SHADOW_RADIUS,
+  SHADOW_SOFT_RADIUS,
+  SSAO_MAX_DISTANCE,
+  SSAO_MIN_DISTANCE,
+  SSAO_RADIUS,
   SUN_AZIMUTH,
   SUN_COLOR,
   SUN_ELEVATION,
   SUN_INTENSITY,
+  VIGNETTE_STRENGTH,
+  FILM_GRAIN_STRENGTH,
 } from '@br/shared';
 import { Sky } from './Sky.js';
+import { VignetteGrainShader } from './VignetteGrainShader.js';
+import { qualitySettings, type QualitySettings, type QualityTierId } from './Quality.js';
 
-/** Owns the WebGL context, the scene graph root, the camera and the lighting. */
+/**
+ * Owns the WebGL context, the scene graph root, the camera, lighting and the
+ * post-processing chain.
+ *
+ * Image-based lighting is baked once from the procedural sky rather than
+ * loaded from a downloaded HDRI - this environment's network policy blocks
+ * the CC0 sources the brief names (ambientCG, Poly Haven), verified before
+ * writing this file. PMREMGenerator is still exactly the mechanism requested;
+ * only the image it convolves is generated in code instead of fetched.
+ */
 export class Renderer {
   readonly scene = new THREE.Scene();
   readonly camera: THREE.PerspectiveCamera;
   readonly sunDirection = new THREE.Vector3();
 
   private readonly renderer: THREE.WebGLRenderer;
-  private readonly sun: THREE.DirectionalLight;
   private readonly sky: Sky;
-  /** Shadow quality is the first thing cut when the frame budget is missed. */
-  private shadowsEnabled = true;
+  private readonly hemi: THREE.HemisphereLight;
+  private readonly pmrem: THREE.PMREMGenerator;
+  private csm: CSM;
+  private composer: EffectComposer;
+  private fxaaPass: ShaderPass | null = null;
+  private vignettePass: ShaderPass | null = null;
+  private settings: QualitySettings;
+  private tier: QualityTierId;
+  /** Bumped every time materials need csm.setupMaterial() called again. */
+  private cascadeVersion = 0;
 
-  constructor(canvas: HTMLCanvasElement) {
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+  constructor(canvas: HTMLCanvasElement, initialTier: QualityTierId) {
+    this.tier = initialTier;
+    this.settings = qualitySettings(initialTier);
+
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    // EffectComposer issues several internal renderer.render() calls per
+    // frame - one per pass. Autoreset would zero the counters at the start of
+    // each of those, leaving info.render holding only the final pass's tally
+    // (typically the last full-screen blit: one draw, one triangle) instead
+    // of the whole frame's. Reset is done by hand, once, at the top of our
+    // own render() below.
+    this.renderer.info.autoReset = false;
     this.renderer.shadowMap.enabled = true;
-    // PCF soft is the cheapest filtering that still hides the texel grid at
-    // this map size; VSM costs a blur pass we cannot afford on integrated parts.
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.25;
+    this.renderer.toneMappingExposure = EXPOSURE;
 
-    // Late afternoon: low in the sky, so shadows are long and directional.
     this.sunDirection
       .set(
         Math.cos(SUN_ELEVATION) * Math.cos(SUN_AZIMUTH),
@@ -53,84 +93,185 @@ export class Renderer {
     this.sky = new Sky(this.sunDirection);
     this.scene.add(this.sky.mesh);
 
-    // Fog matched to the horizon, so distance dissolves into sky rather than
-    // ending at a visible edge where the ground slab stops.
     const horizon = Sky.horizonColor();
-    this.scene.fog = new THREE.Fog(horizon.getHex(), FOG_NEAR, FOG_FAR);
+    this.scene.fog = new THREE.Fog(new THREE.Color(FOG_TINT).lerp(horizon, 0.5).getHex(), FOG_NEAR, FOG_FAR);
 
-    this.sun = new THREE.DirectionalLight(SUN_COLOR, SUN_INTENSITY);
-    this.sun.castShadow = true;
-    this.sun.shadow.mapSize.set(SHADOW_MAP_SIZE, SHADOW_MAP_SIZE);
-    this.sun.shadow.bias = SHADOW_BIAS;
-    this.sun.shadow.normalBias = SHADOW_NORMAL_BIAS;
-    const shadowCamera = this.sun.shadow.camera;
-    shadowCamera.left = -SHADOW_RADIUS;
-    shadowCamera.right = SHADOW_RADIUS;
-    shadowCamera.top = SHADOW_RADIUS;
-    shadowCamera.bottom = -SHADOW_RADIUS;
-    shadowCamera.near = 1;
-    shadowCamera.far = SHADOW_DEPTH;
-    shadowCamera.updateProjectionMatrix();
-    this.scene.add(this.sun);
-    this.scene.add(this.sun.target);
+    this.hemi = new THREE.HemisphereLight(HEMI_SKY_COLOR, HEMI_GROUND_COLOR, HEMI_INTENSITY);
+    this.scene.add(this.hemi);
 
-    this.scene.add(new THREE.HemisphereLight(HEMI_SKY_COLOR, HEMI_GROUND_COLOR, HEMI_INTENSITY));
+    this.pmrem = new THREE.PMREMGenerator(this.renderer);
+    this.bakeEnvironment();
 
     this.camera = new THREE.PerspectiveCamera(80, 1, 0.1, FOG_FAR + 40);
     this.camera.position.set(0, PLAYER_EYE_HEIGHT, 0);
     this.camera.rotation.order = 'YXZ';
 
+    this.csm = this.buildCsm();
+    this.composer = this.buildComposer();
+
     this.resize();
     window.addEventListener('resize', () => this.resize());
+  }
+
+  /**
+   * Renders the sky to a cubemap and runs it through PMREMGenerator, so every
+   * MeshStandardMaterial in the scene picks up ambient sky light and soft
+   * reflections without a single extra light. On an overcast day this is
+   * doing most of the actual lighting work.
+   */
+  private bakeEnvironment(): void {
+    const bakeScene = new THREE.Scene();
+    const bakeMesh = this.sky.mesh.clone();
+    bakeMesh.position.set(0, 0, 0);
+    bakeScene.add(bakeMesh);
+    const rendered = this.pmrem.fromScene(bakeScene, 0, 0.1, 2000);
+    this.scene.environment = rendered.texture;
+    this.scene.environmentIntensity = 1;
+    bakeMesh.geometry.dispose();
+    bakeScene.remove(bakeMesh);
+  }
+
+  private buildCsm(): CSM {
+    const csm = new CSM({
+      camera: this.camera,
+      parent: this.scene,
+      cascades: this.settings.cascades,
+      maxFar: FOG_FAR,
+      mode: 'practical',
+      shadowMapSize: this.settings.shadowMapSize,
+      lightDirection: this.sunDirection.clone().negate(),
+      lightIntensity: SUN_INTENSITY,
+      lightNear: 1,
+      lightFar: SHADOW_DEPTH,
+      lightMargin: 30,
+    });
+
+    // CSM.js always creates plain white lights; the overcast tint is ours to add.
+    for (const light of csm.lights) {
+      light.color.set(SUN_COLOR);
+      light.castShadow = this.settings.shadows;
+      light.shadow.bias = SHADOW_BIAS;
+      light.shadow.normalBias = SHADOW_NORMAL_BIAS;
+      if (this.settings.softShadows) light.shadow.radius = SHADOW_SOFT_RADIUS;
+    }
+    this.renderer.shadowMap.type = this.settings.softShadows ? THREE.VSMShadowMap : THREE.PCFShadowMap;
+    this.renderer.shadowMap.enabled = this.settings.shadows;
+    this.cascadeVersion += 1;
+    return csm;
+  }
+
+  private buildComposer(): EffectComposer {
+    const composer = new EffectComposer(this.renderer);
+    composer.addPass(new RenderPass(this.scene, this.camera));
+
+    this.fxaaPass = null;
+    this.vignettePass = null;
+
+    if (this.settings.postProcessing) {
+      if (this.settings.ssao) {
+        const ssao = new SSAOPass(this.scene, this.camera);
+        ssao.kernelRadius = SSAO_RADIUS;
+        ssao.minDistance = SSAO_MIN_DISTANCE;
+        ssao.maxDistance = SSAO_MAX_DISTANCE;
+        ssao.output = SSAOPass.OUTPUT.Default;
+        composer.addPass(ssao);
+      }
+
+      if (this.settings.bloom) {
+        const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), BLOOM_STRENGTH, BLOOM_RADIUS, BLOOM_THRESHOLD);
+        composer.addPass(bloom);
+      }
+
+      const vignette = new ShaderPass(VignetteGrainShader);
+      vignette.uniforms.vignetteStrength.value = VIGNETTE_STRENGTH;
+      vignette.uniforms.grainStrength.value = FILM_GRAIN_STRENGTH;
+      composer.addPass(vignette);
+      this.vignettePass = vignette;
+
+      if (this.settings.fxaa) {
+        const fxaa = new ShaderPass(FXAAShader);
+        composer.addPass(fxaa);
+        this.fxaaPass = fxaa;
+      }
+    }
+
+    return composer;
+  }
+
+  /** Tears down and rebuilds the shadow rig and post-processing stack for a new tier. */
+  setQualityTier(tier: QualityTierId): void {
+    if (tier === this.tier) return;
+    this.tier = tier;
+    this.settings = qualitySettings(tier);
+
+    this.csm.dispose();
+    this.csm = this.buildCsm();
+    this.composer.dispose();
+    this.composer = this.buildComposer();
+    this.resize();
+  }
+
+  get quality(): QualitySettings {
+    return this.settings;
+  }
+
+  get qualityTier(): QualityTierId {
+    return this.tier;
+  }
+
+  /**
+   * Every opaque, lit material must be registered once to receive the
+   * cascaded shadows correctly - without this a material still picks up light
+   * from all of CSM's underlying DirectionalLights, just summed instead of
+   * blended, which double-brightens wherever two cascades overlap. Views hold
+   * this callback rather than importing Renderer directly, so a view stays
+   * constructible and testable without a full renderer behind it.
+   */
+  readonly setupCascadeMaterial = (material: THREE.Material): void => {
+    this.csm.setupMaterial(material);
+  };
+
+  /** Bumped on every tier change; views compare it to know their materials are stale. */
+  get cascadeSetupVersion(): number {
+    return this.cascadeVersion;
   }
 
   private resize(): void {
     const width = window.innerWidth;
     const height = window.innerHeight;
+    const scale = this.settings.renderScale;
     this.renderer.setSize(width, height);
+    this.renderer.setDrawingBufferSize(Math.round(width * scale), Math.round(height * scale), this.renderer.getPixelRatio());
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
+    this.composer.setSize(Math.round(width * scale), Math.round(height * scale));
+    if (this.fxaaPass) {
+      const ratio = this.renderer.getPixelRatio();
+      this.fxaaPass.uniforms.resolution.value.set(1 / (width * scale * ratio), 1 / (height * scale * ratio));
+    }
+    this.csm.updateFrustums();
   }
 
   /**
-   * Re-centres the shadow frustum on a point each frame.
-   *
-   * A single map covering 500x500 would give roughly 25cm texels at 2k, which
-   * turns every shadow edge into a staircase. Fitting it around the player
-   * instead buys about 5cm texels, at the cost of shadows only existing near
-   * the viewer - which is the only place they are legible anyway.
+   * Repositions the cascades for this frame. Must run after the camera's
+   * position/rotation are set for the frame and before render() - CSM reads
+   * camera.matrixWorld directly, which the renderer would otherwise only
+   * refresh internally during the draw itself, one frame too late.
    */
-  focusShadows(target: THREE.Vector3): void {
-    if (!this.shadowsEnabled) return;
-    // Snapped to the texel grid, otherwise the whole shadow shimmers as the
-    // frustum slides under sub-texel camera motion.
-    const texel = (SHADOW_RADIUS * 2) / SHADOW_MAP_SIZE;
-    const x = Math.round(target.x / texel) * texel;
-    const z = Math.round(target.z / texel) * texel;
-    this.sun.target.position.set(x, target.y, z);
-    this.sun.position.set(
-      x + this.sunDirection.x * (SHADOW_DEPTH * 0.5),
-      target.y + this.sunDirection.y * (SHADOW_DEPTH * 0.5),
-      z + this.sunDirection.z * (SHADOW_DEPTH * 0.5),
-    );
-    this.sun.target.updateMatrixWorld();
+  updateShadows(): void {
+    this.camera.updateMatrixWorld();
+    this.csm.update();
   }
 
-  /** Turns shadows off wholesale; the fallback when the budget is missed. */
-  setShadowsEnabled(enabled: boolean): void {
-    this.shadowsEnabled = enabled;
-    this.sun.castShadow = enabled;
-    this.renderer.shadowMap.enabled = enabled;
-    this.renderer.shadowMap.needsUpdate = true;
-  }
-
-  get shadows(): boolean {
-    return this.shadowsEnabled;
-  }
-
-  render(): void {
+  render(now: number): void {
+    this.renderer.info.reset();
     this.sky.follow(this.camera);
-    this.renderer.render(this.scene, this.camera);
+    if (this.vignettePass) this.vignettePass.uniforms.time.value = now / 1000;
+    if (this.settings.postProcessing) {
+      this.composer.render();
+    } else {
+      this.renderer.render(this.scene, this.camera);
+    }
   }
 
   /** Draw calls and triangles for the frame just rendered. */
@@ -153,5 +294,18 @@ export class Renderer {
 
   get programCount(): number {
     return this.renderer.info.programs?.length ?? 0;
+  }
+
+  /** Bytes of GPU texture memory currently resident, for the perf overlay. */
+  estimateTextureMemory(textures: readonly (THREE.Texture | null)[]): number {
+    let bytes = 0;
+    for (const texture of textures) {
+      const image = texture?.image as { width?: number; height?: number } | undefined;
+      if (image?.width === undefined || image.height === undefined) continue;
+      // 4 bytes/texel plus a third again for the mip chain - close enough for
+      // an overlay reading, not a billing system.
+      bytes += image.width * image.height * 4 * 1.33;
+    }
+    return bytes;
   }
 }

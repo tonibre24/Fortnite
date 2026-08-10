@@ -61,10 +61,14 @@ export class Hud {
   private readonly perfEl = mustFind('perf');
   private readonly volumeSlider = mustFind('volume-slider') as HTMLInputElement;
   private readonly volumeValue = mustFind('volume-value');
+  private readonly qualitySelect = mustFind('quality-select') as HTMLSelectElement;
 
   /** Set by the caller to receive slider moves, as a 0..1 fraction. */
   onVolumeChange: ((value: number) => void) | null = null;
   private volumeBound = false;
+  /** Set by the caller to receive a manually picked tier. */
+  onQualityChange: ((tier: number) => void) | null = null;
+  private qualityBound = false;
   private readonly slotEls: HTMLElement[] = [];
   private inventorySignature = '';
 
@@ -120,6 +124,17 @@ export class Hud {
         const fraction = Number(this.volumeSlider.value) / 100;
         this.volumeValue.textContent = `${this.volumeSlider.value}%`;
         this.onVolumeChange?.(fraction);
+      });
+    }
+  }
+
+  /** Selects the dropdown, without firing the change callback. */
+  setQualityTier(tier: number): void {
+    this.qualitySelect.value = String(tier);
+    if (!this.qualityBound) {
+      this.qualityBound = true;
+      this.qualitySelect.addEventListener('change', () => {
+        this.onQualityChange?.(Number(this.qualitySelect.value));
       });
     }
   }

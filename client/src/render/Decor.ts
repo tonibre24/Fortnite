@@ -57,13 +57,19 @@ export class Decor {
   private readonly geometries: THREE.BufferGeometry[] = [];
   private readonly materials: THREE.Material[] = [];
 
-  constructor(scene: THREE.Scene, map: GameMap) {
+  constructor(
+    scene: THREE.Scene,
+    map: GameMap,
+    private readonly setupCascadeMaterial: (material: THREE.Material) => void,
+    /** Fraction of the seeded background clutter actually placed, from the active quality tier. */
+    density = 1,
+  ) {
     // Salted so this stream can never be confused with the one that built the
     // map, however either is later extended.
     const rng = new Rng((map.seed ^ DECOR_SEED_SALT) >>> 0);
 
-    this.grass(rng, map);
-    this.pebbles(rng, map);
+    this.grass(rng, map, density);
+    this.pebbles(rng, map, density);
     this.fences(rng, map);
     this.buildingTrim(rng, map);
 
@@ -87,8 +93,11 @@ export class Decor {
     color: number,
     capacity: number,
     castShadow: boolean,
+    roughness = 0.9,
+    metalness = 0,
   ): PropBatch {
-    const material = new THREE.MeshLambertMaterial({ color, flatShading: true });
+    const material = new THREE.MeshStandardMaterial({ color, flatShading: true, roughness, metalness });
+    this.setupCascadeMaterial(material);
     const mesh = new THREE.InstancedMesh(geometry, material, capacity);
     mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
     mesh.castShadow = castShadow;
@@ -133,7 +142,7 @@ export class Decor {
    * Grass tufts: three crossed blades, so they read from any angle without a
    * texture and without alpha testing, which is expensive on tiled GPUs.
    */
-  private grass(rng: Rng, map: GameMap): void {
+  private grass(rng: Rng, map: GameMap, density: number): void {
     const blade = new THREE.ConeGeometry(0.16, 0.55, 3, 1);
     blade.translate(0, 0.275, 0);
     const batch = this.batch(blade, COLOR_GRASS_A, DECOR_GRASS_COUNT, false);
@@ -148,7 +157,8 @@ export class Decor {
     const cool = new THREE.Color(COLOR_GRASS_B);
     const tint = new THREE.Color();
 
-    for (let i = 0; i < DECOR_GRASS_COUNT; i++) {
+    const grassCount = Math.round(DECOR_GRASS_COUNT * density);
+    for (let i = 0; i < grassCount; i++) {
       const x = rng.range(-MAP_HALF, MAP_HALF);
       const z = rng.range(-MAP_HALF, MAP_HALF);
       if (Math.hypot(x, z) < SPAWN_CLEARANCE_RADIUS) continue;
@@ -167,7 +177,7 @@ export class Decor {
   }
 
   /** Pebbles and ground litter, breaking up the flat slab underfoot. */
-  private pebbles(rng: Rng, map: GameMap): void {
+  private pebbles(rng: Rng, map: GameMap, density: number): void {
     // Eight triangles rather than the dodecahedron's thirty-six; at this size
     // the silhouette is all that reads anyway.
     const geometry = new THREE.OctahedronGeometry(0.26, 0);
@@ -181,7 +191,8 @@ export class Decor {
     const base = new THREE.Color(COLOR_PEBBLE);
     const tint = new THREE.Color();
 
-    for (let i = 0; i < DECOR_PEBBLE_COUNT; i++) {
+    const pebbleCount = Math.round(DECOR_PEBBLE_COUNT * density);
+    for (let i = 0; i < pebbleCount; i++) {
       const x = rng.range(-MAP_HALF, MAP_HALF);
       const z = rng.range(-MAP_HALF, MAP_HALF);
       if (Decor.insideBuilding(map.buildings, x, z)) continue;
@@ -286,7 +297,9 @@ export class Decor {
 
     // Four walls, up to two storeys, a handful of windows per wall.
     const perBuilding = 4 * BUILDING_MAX_STOREYS * 6;
-    const glass = this.batch(panel, COLOR_GLASS, map.buildings.length * perBuilding + 1, false);
+    // Smooth and a little reflective, so a window actually reads as glass
+    // against the surrounding matte wall and trim.
+    const glass = this.batch(panel, COLOR_GLASS, map.buildings.length * perBuilding + 1, false, 0.18, 0.05);
     const frames = this.batch(bar, COLOR_TRIM, map.buildings.length * perBuilding * 4 + 8, false);
     const eaves = this.batch(slab, COLOR_TRIM, map.buildings.length * BUILDING_MAX_STOREYS + 1, true);
 

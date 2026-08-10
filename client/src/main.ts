@@ -38,6 +38,7 @@ import { GameAudio } from './audio/GameAudio.js';
 import { GameClient } from './game/GameClient.js';
 import { InputSampler } from './input/InputSampler.js';
 import { PlayerView } from './render/PlayerView.js';
+import { loadStoredTier, QUALITY_TIER_NAMES, QualityTier, storeTier, type QualityTierId } from './render/Quality.js';
 import { Renderer } from './render/Renderer.js';
 import { Decor } from './render/Decor.js';
 import { LootView } from './render/LootView.js';
@@ -62,10 +63,18 @@ function serverUrl(): string {
 const canvas = document.getElementById('viewport');
 if (!(canvas instanceof HTMLCanvasElement)) throw new Error('missing #viewport canvas');
 
-const renderer = new Renderer(canvas);
+/**
+ * A stored preference wins outright. Otherwise start at a conservative tier
+ * that will not embarrass the first few seconds on any machine, and let the
+ * short benchmark below settle on where this hardware actually belongs.
+ */
+const storedTier = loadStoredTier();
+let benchmarking = storedTier === null;
+const renderer = new Renderer(canvas, storedTier ?? QualityTier.Medium);
+
 const hud = new Hud();
 const input = new InputSampler(canvas);
-const playerView = new PlayerView(renderer.scene);
+let playerView = new PlayerView(renderer.scene, renderer.setupCascadeMaterial);
 const tracers = new Tracers(renderer.scene);
 const lootView = new LootView(renderer.scene);
 const roundView = new RoundView(renderer.scene);
@@ -97,9 +106,27 @@ window.addEventListener('keydown', unlockAudio);
 hud.setVolume(audio.volume);
 hud.onVolumeChange = (value) => audio.setVolume(value);
 
+hud.setQualityTier(renderer.qualityTier);
+hud.onQualityChange = (tier) => {
+  // A manual choice always wins over the one-shot auto-benchmark, including
+  // one made while it is still sampling.
+  benchmarking = false;
+  const id = tier as QualityTierId;
+  renderer.setQualityTier(id);
+  storeTier(id);
+};
+
 let worldView: WorldView | null = null;
 let decor: Decor | null = null;
 let worldVersion = -1;
+/**
+ * Bumped whenever the shadow rig is rebuilt with a different cascade count.
+ * worldView, decor and playerView all bake CSM's cascade count into their
+ * materials at creation, so a stale one after a tier change would light
+ * correctly but shadow from the wrong cascade - this is what forces them to
+ * be rebuilt alongside a genuine map change.
+ */
+let materialsVersion = -1;
 /**
  * The collision world indexes only the solid boxes, so the same filtered list
  * is kept here to turn a hit index back into the colour of what was hit.
@@ -137,6 +164,47 @@ const frameLog: number[] = [];
 /** The CPU half of each frame, which unlike the draw is not GPU-bound. */
 const cpuLog: number[] = [];
 
+/**
+ * How long the one-shot startup benchmark samples before picking a tier.
+ * Long enough to get past the very first frames, whose cost is dominated by
+ * shader compilation rather than steady-state rendering.
+ */
+const BENCHMARK_FRAMES = 90;
+let benchmarkFrames = 0;
+let benchmarkTotal = 0;
+
+/** Frame-time thresholds a tier must beat, loosest first. */
+const TIER_THRESHOLDS_MS: [number, QualityTierId][] = [
+  [10, QualityTier.Ultra],
+  [16.7, QualityTier.High],
+  [22, QualityTier.Medium],
+];
+
+function chooseTierFromFrameTime(avgMs: number): QualityTierId {
+  for (const [limit, tier] of TIER_THRESHOLDS_MS) {
+    if (avgMs < limit) return tier;
+  }
+  return QualityTier.Low;
+}
+
+/** Runs once on a fresh install: a short sample, then a tier that is stored and never re-measured. */
+function updateAutoBenchmark(frameMs: number): void {
+  if (!benchmarking) return;
+  // A backgrounded tab or a hitch during a map load is not the steady state
+  // this is trying to measure; a stall would otherwise tank the average and
+  // undersell hardware that is actually fine.
+  if (frameMs > 250) return;
+  benchmarkFrames += 1;
+  benchmarkTotal += frameMs;
+  if (benchmarkFrames < BENCHMARK_FRAMES) return;
+
+  const chosen = chooseTierFromFrameTime(benchmarkTotal / benchmarkFrames);
+  renderer.setQualityTier(chosen);
+  storeTier(chosen);
+  hud.setQualityTier(chosen);
+  benchmarking = false;
+}
+
 function samplePerf(now: number, cpuMs: number, drawMs: number): void {
   if (lastFrameStart !== 0) {
     const delta = now - lastFrameStart;
@@ -148,16 +216,18 @@ function samplePerf(now: number, cpuMs: number, drawMs: number): void {
       frameLog.push(delta);
       cpuLog.push(cpuMs);
     }
+    updateAutoBenchmark(delta);
   }
   lastFrameStart = now;
   if (frameSamples < PERF_SAMPLE_FRAMES) return;
   const frame = frameTotal / frameSamples;
+  const quality = renderer.quality;
   perfText =
     `${(1000 / frame).toFixed(0)} fps  ${frame.toFixed(1)} ms/frame\n` +
     `${(cpuTotal / frameSamples).toFixed(2)} ms game  ${(drawTotal / frameSamples).toFixed(2)} ms draw\n` +
     `${renderer.drawCalls} draws  ${(renderer.triangles / 1000).toFixed(0)}k tris\n` +
     `${renderer.textureCount} tex  ${renderer.geometryCount} geo  ${renderer.programCount} prog\n` +
-    `shadows ${renderer.shadows ? 'on' : 'off'}  props ${decor?.propCount ?? 0}`;
+    `tier ${QUALITY_TIER_NAMES[renderer.qualityTier]}  shadows ${quality.shadows ? `${quality.cascades}csm` : 'off'}  props ${decor?.propCount ?? 0}`;
   frameSamples = 0;
   frameTotal = 0;
   cpuTotal = 0;
@@ -191,11 +261,18 @@ hud.setPerfVisible(false);
     textures: renderer.textureCount,
     geometries: renderer.geometryCount,
     programs: renderer.programCount,
-    shadows: renderer.shadows,
+    tier: QUALITY_TIER_NAMES[renderer.qualityTier],
+    shadows: renderer.quality.shadows,
+    cascades: renderer.quality.cascades,
     props: decor?.propCount ?? 0,
     players: client.playerCount,
   }),
-  setShadows: (on: boolean) => renderer.setShadowsEnabled(on),
+  /** Sets a tier directly and stops the one-shot auto-benchmark from overriding it. */
+  setTier: (tier: QualityTierId) => {
+    benchmarking = false;
+    renderer.setQualityTier(tier);
+  },
+  tierNames: QUALITY_TIER_NAMES,
 };
 
 /** The nearest item within reach, which is what E would take. */
@@ -430,14 +507,27 @@ function frame(): void {
   const now = performance.now();
   client.update(now);
 
-  // Rebuilt whenever a new round hands us a new map.
-  if (client.map !== null && worldVersion !== client.mapVersion) {
+  // Rebuilt on a new map, or when a tier change gives the shadow rig a
+  // different cascade count that the existing materials were not compiled
+  // against.
+  if (
+    client.map !== null &&
+    (worldVersion !== client.mapVersion || materialsVersion !== renderer.cascadeSetupVersion)
+  ) {
     worldView?.dispose(renderer.scene);
     decor?.dispose(renderer.scene);
-    worldView = new WorldView(renderer.scene, client.map);
-    decor = new Decor(renderer.scene, client.map);
+    playerView.dispose();
+    worldView = new WorldView(renderer.scene, client.map, renderer.setupCascadeMaterial);
+    decor = new Decor(
+      renderer.scene,
+      client.map,
+      renderer.setupCascadeMaterial,
+      renderer.quality.vegetationDensity,
+    );
+    playerView = new PlayerView(renderer.scene, renderer.setupCascadeMaterial);
     solidBoxes = client.map.boxes.filter((b) => b.solid);
     worldVersion = client.mapVersion;
+    materialsVersion = renderer.cascadeSetupVersion;
   }
 
   // Clamped: a backgrounded tab returns with a huge delta that would otherwise
@@ -498,7 +588,7 @@ function frame(): void {
   );
   roundView.update(client.round, now / 1000);
   lootView.update(client.loot, now);
-  renderer.focusShadows(renderer.camera.position);
+  renderer.updateShadows();
   updateAudio();
   tracers.update(now);
   tracers.flush();
@@ -507,7 +597,7 @@ function frame(): void {
   hud.setStats(buildStats());
   const cpuMs = performance.now() - now;
   const drawStart = performance.now();
-  renderer.render();
+  renderer.render(now);
   const drawMs = performance.now() - drawStart;
 
   samplePerf(now, cpuMs, drawMs);

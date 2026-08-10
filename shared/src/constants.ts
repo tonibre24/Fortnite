@@ -345,41 +345,69 @@ export const PERF_LOG_MAX = 20000;
 // -------------------------------------------------------------------- visuals
 
 /**
- * Late afternoon. Committing to one time of day is what makes the palette
- * coherent: a low sun gives long shadows that show which way a surface faces,
- * which is how a player reads geometry at a glance.
+ * Fully overcast. Committing to one condition is what makes the palette
+ * coherent - a damp farmland valley under stratus cloud, where the light
+ * source is the whole sky dome rather than a point. The "sun" direction below
+ * still matters: it is where the cloud layer is brightest and is what the weak
+ * directional light and the soft specular highlight in the sky both key off.
  */
 export const SUN_AZIMUTH = 2.35;
-export const SUN_ELEVATION = 0.42;
-export const SUN_INTENSITY = 2.9;
-export const SUN_COLOR = 0xffe6c2;
-/** Sky and bounce fill, so shadowed faces stay readable instead of going black. */
-export const HEMI_SKY_COLOR = 0x9fc4e8;
-export const HEMI_GROUND_COLOR = 0x6b7a4a;
-export const HEMI_INTENSITY = 1.45;
+export const SUN_ELEVATION = 0.62;
+/** Deliberately weak - per the brief, nearly all light on an overcast day is ambient sky light. */
+export const SUN_INTENSITY = 0.55;
+export const SUN_COLOR = 0xd7dde2;
+/** Sky and bounce fill. Modest: scene.environment (baked from the sky below) carries most of the ambient term. */
+export const HEMI_SKY_COLOR = 0x9aa7ad;
+export const HEMI_GROUND_COLOR = 0x5c5f4e;
+export const HEMI_INTENSITY = 0.55;
+/** Tonemap exposure. One tunable knob rather than baked into every light. */
+export const EXPOSURE = 1.0;
 
-/** Sky gradient, top to horizon, plus the warm band the sun sits in. */
-export const SKY_TOP_COLOR = 0x4f8fd6;
-export const SKY_HORIZON_COLOR = 0xbcd8e8;
-export const SKY_HAZE_COLOR = 0xf2d3a8;
+/** Sky gradient, top to horizon - deliberately close together for a flat, hazy overcast dome. */
+export const SKY_TOP_COLOR = 0xaeb7bb;
+export const SKY_HORIZON_COLOR = 0xc9cdc6;
+/** The soft, diffuse patch of brighter cloud behind which the sun sits. */
+export const SKY_GLOW_COLOR = 0xf2efe6;
 /** Where the horizon band sits in the gradient, 0 = bottom, 1 = top. */
-export const SKY_HORIZON_HEIGHT = 0.5;
-export const SKY_HAZE_WIDTH = 0.09;
-
-/** Fog is matched to the horizon so the map edge dissolves rather than ends. */
-export const FOG_NEAR = 120;
-export const FOG_FAR = 460;
+export const SKY_HORIZON_HEIGHT = 0.42;
+export const SKY_HAZE_WIDTH = 0.4;
+/** Spatial frequency of the cloud mottling on the sky dome. */
+export const SKY_CLOUD_SCALE = 3.2;
 
 /**
- * The shadow frustum follows the player rather than covering the map. A 500x500
- * map in one map would be unusably coarse; this keeps texels small where they
- * are actually looked at.
+ * Fog matched to the horizon so the map edge dissolves rather than ends. Kept
+ * fairly close-in - overcast, damp air has real haze, and low contrast at
+ * distance is doing useful work hiding the geometry budget.
+ */
+export const FOG_NEAR = 90;
+export const FOG_FAR = 400;
+/** Fog leans slightly blue-grey rather than matching the sky tint exactly. */
+export const FOG_TINT = 0xb7bfc0;
+
+/**
+ * Cascaded shadow maps fitted around the player rather than the whole map -
+ * cascade count and map size are chosen per quality tier (client/src/render/
+ * Quality.ts); these are the Ultra-tier baseline and the shared shadow style.
  */
 export const SHADOW_MAP_SIZE = 2048;
-export const SHADOW_RADIUS = 55;
-export const SHADOW_DEPTH = 260;
-export const SHADOW_BIAS = -0.0012;
+export const SHADOW_DEPTH = 320;
+export const SHADOW_BIAS = -0.0009;
 export const SHADOW_NORMAL_BIAS = 0.02;
+/** Soft-shadow blur radius, used on tiers that shadow with VSM. */
+export const SHADOW_SOFT_RADIUS = 3.5;
+
+// ------------------------------------------------------------- post-processing
+
+/** Subtle by design - contact shadows in corners, not a grey wash. */
+export const SSAO_RADIUS = 0.6;
+export const SSAO_MIN_DISTANCE = 0.0006;
+export const SSAO_MAX_DISTANCE = 0.09;
+/** Light bloom on the brightest points only. */
+export const BLOOM_STRENGTH = 0.22;
+export const BLOOM_RADIUS = 0.4;
+export const BLOOM_THRESHOLD = 0.86;
+export const VIGNETTE_STRENGTH = 0.28;
+export const FILM_GRAIN_STRENGTH = 0.035;
 
 /** Per-instance hue jitter, so repeated props do not read as tiled. */
 export const PROP_TINT_JITTER = 0.11;
