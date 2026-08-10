@@ -583,3 +583,56 @@ export const AUDIO_BED_RAMP = 0.12;
 export const MAX_PLAYERS = 20;
 /** Delay before a downed player's camera detaches into free spectate. */
 export const SPECTATE_HANDOFF_TICKS = 20;
+
+// ---------------------------------------------------------- viewmodel/camera
+
+/**
+ * All purely client-side presentation - never read by shared/ or server/, but
+ * kept here with every other tunable rather than scattered into a render
+ * file, per this file's own opening line.
+ *
+ * Everything below is restrained by design: "overdone camera motion reads as
+ * fake" was explicit in the brief, and none of it feeds back into aim -
+ * spread stays exactly what the shared, server-validated model already
+ * produces. This is rendering only.
+ */
+export const BASE_FOV = 80;
+export const ADS_FOV = 58;
+export const FOV_EASE_SPEED = 9;
+/** Fixed regardless of world FOV/ADS zoom, or the gun would visibly balloon on aim. */
+export const VIEWMODEL_FOV = 70;
+export const VIEWMODEL_NEAR = 0.01;
+export const VIEWMODEL_FAR = 12;
+/** Three.js layer the viewmodel lives on, invisible to the main camera. */
+export const VIEWMODEL_LAYER = 1;
+
+/** Idle sway: the weapon lags a beat behind a fast look-around rather than tracking it instantly. */
+export const SWAY_AMOUNT = 0.02;
+export const SWAY_PITCH_AMOUNT = 0.014;
+export const SWAY_EASE_SPEED = 7;
+
+/** Walk/sprint bob: a small figure-eight while grounded and moving. */
+export const BOB_WALK_CYCLE_SPEED = 9;
+export const BOB_WALK_AMOUNT = 0.018;
+export const BOB_SPRINT_CYCLE_SPEED = 13;
+export const BOB_SPRINT_AMOUNT = 0.03;
+
+/** A slow, continuous sway even standing perfectly still. */
+export const BREATH_CYCLE_SPEED = 1.6;
+export const BREATH_AMOUNT = 0.0035;
+
+/** Pose offsets, in the viewmodel's own local space. */
+export const SPRINT_LOWER_OFFSET_Y = -0.14;
+export const SPRINT_LOWER_OFFSET_Z = 0.06;
+export const SPRINT_TILT = 0.24;
+export const ADS_POSE_EASE_SPEED = 11;
+export const RELOAD_DIP_AMOUNT = 0.1;
+
+/** Recoil kick on firing: a purely visual pitch/position impulse with its own decay. */
+export const RECOIL_PITCH_KICK = 0.016;
+export const RECOIL_POSITION_KICK = 0.03;
+export const RECOIL_RECOVERY_SPEED = 10;
+
+/** Landing impact dip, triggered on the OnGround transition. */
+export const LANDING_DIP_AMOUNT = 0.11;
+export const LANDING_DIP_RECOVERY_SPEED = 8;

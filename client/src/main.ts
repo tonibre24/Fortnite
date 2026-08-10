@@ -18,6 +18,7 @@ import {
   TICK_RATE,
   COLOR_GROUND,
   WEAPON_MAX_RANGE,
+  WeaponClass,
   aimDirection,
   effectiveSpread,
   raycastWorld,
@@ -47,6 +48,7 @@ import { RoundView } from './render/RoundView.js';
 import { Tracers } from './render/Tracers.js';
 import { Vegetation } from './render/Vegetation.js';
 import { Vfx } from './render/Vfx.js';
+import { Viewmodel } from './render/Viewmodel.js';
 import { WorldView } from './render/WorldView.js';
 import { Hud } from './ui/Hud.js';
 import { Minimap } from './ui/Minimap.js';
@@ -81,6 +83,7 @@ const tracers = new Tracers(renderer.scene);
 const lootView = new LootView(renderer.scene);
 const roundView = new RoundView(renderer.scene);
 const vfx = new Vfx(renderer.scene);
+const viewmodel = new Viewmodel(renderer.scene, renderer.setupCascadeMaterial);
 const minimap = new Minimap();
 const audio = new GameAudio();
 
@@ -359,6 +362,7 @@ function handleEvent(event: GameEvent, now: number): void {
   audio.handleEvent(event, client.playerId);
   switch (event.type) {
     case EventType.Shot:
+      if (event.shooterId === client.playerId) viewmodel.triggerRecoil();
       if (client.map !== null) {
         tracers.add(event, client.map, now);
         shotEffects(event, now);
@@ -438,9 +442,14 @@ function busCamera(): boolean {
   return true;
 }
 
-/** Places the camera: first person while alive, chase cam once eliminated. */
-function updateCamera(): void {
-  if (busCamera()) return;
+/**
+ * Places the camera: first person while alive, chase cam once eliminated.
+ * Returns whether this was the first-person case, which is also exactly when
+ * the viewmodel (arms, weapon, its own camera feel) belongs on screen - not
+ * riding the bus, not spectating.
+ */
+function updateCamera(): boolean {
+  if (busCamera()) return false;
   if (client.alive) {
     client.predictor.renderPosition(client.alpha, eye);
     renderer.camera.position.set(eye.x, eye.y + PLAYER_EYE_HEIGHT, eye.z);
@@ -449,7 +458,7 @@ function updateCamera(): void {
       dequantizeYaw(client.predictor.state.yawQ),
       0,
     );
-    return;
+    return true;
   }
 
   // Follow the killer if they are still around, otherwise anyone at all.
@@ -459,7 +468,7 @@ function updateCamera(): void {
     target = first.done ? undefined : first.value;
     if (target !== undefined) spectating = target.id;
   }
-  if (target === undefined) return;
+  if (target === undefined) return false;
 
   const back = 4.5;
   renderer.camera.position.set(
@@ -468,6 +477,7 @@ function updateCamera(): void {
     target.z + Math.cos(target.yaw) * back,
   );
   renderer.camera.rotation.set(-0.18, target.yaw, 0);
+  return false;
 }
 
 function buildStats(): string[] {
@@ -561,12 +571,20 @@ function frame(): void {
   for (const event of client.drainEvents()) handleEvent(event, now);
 
   if (client.ready) {
-    updateCamera();
+    const firstPerson = updateCamera();
     playerView.update(client.remotes, dtSeconds);
 
     const state = client.predictor.state;
     const weapon = unpackWeapon(state.weapon);
     const held = state.inventory[state.slot];
+
+    viewmodel.setVisible(firstPerson);
+    if (firstPerson && dtSeconds > 0) {
+      const aiming = (state.flags & StateFlag.Aiming) !== 0;
+      const moving = Math.hypot(state.vel.x, state.vel.z) > 0.5;
+      viewmodel.updateCameraFeel(renderer.camera, state, dtSeconds);
+      viewmodel.updateWeapon(renderer.camera, state, weapon?.cls ?? WeaponClass.Pistol, aiming, moving, dtSeconds);
+    }
 
     // The use bar is a local guess at the server's timer; the effect itself is
     // still entirely server-side.
@@ -621,7 +639,7 @@ function frame(): void {
   hud.setStats(buildStats());
   const cpuMs = performance.now() - now;
   const drawStart = performance.now();
-  renderer.render(now);
+  renderer.render(now, viewmodel.camera);
   const drawMs = performance.now() - drawStart;
 
   samplePerf(now, cpuMs, drawMs);

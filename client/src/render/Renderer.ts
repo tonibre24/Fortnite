@@ -263,7 +263,14 @@ export class Renderer {
     this.csm.update();
   }
 
-  render(now: number): void {
+  /**
+   * `viewmodelCamera` is a second pass, depth-cleared and drawn straight to
+   * the screen after post-processing: its own near plane (not the world's)
+   * is what stops the weapon poking through a wall the player stands close
+   * to, and clearing only depth - not colour - is what lets it draw over the
+   * already-composited world instead of erasing it.
+   */
+  render(now: number, viewmodelCamera?: THREE.PerspectiveCamera): void {
     this.renderer.info.reset();
     this.sky.follow(this.camera);
     if (this.vignettePass) this.vignettePass.uniforms.time.value = now / 1000;
@@ -271,6 +278,15 @@ export class Renderer {
       this.composer.render();
     } else {
       this.renderer.render(this.scene, this.camera);
+    }
+
+    if (viewmodelCamera !== undefined) {
+      viewmodelCamera.aspect = this.camera.aspect;
+      viewmodelCamera.updateProjectionMatrix();
+      this.renderer.autoClear = false;
+      this.renderer.clearDepth();
+      this.renderer.render(this.scene, viewmodelCamera);
+      this.renderer.autoClear = true;
     }
   }
 
