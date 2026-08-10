@@ -53,13 +53,53 @@ load time - Canvas2D and GLSL, no binary files:
   exactly as the brief specifies for image-based lighting - `fromScene()`
   rather than `fromEquirectangular()`, since the source image is generated
   rather than loaded. `scene.environment` is what it produces.
-- **Terrain / props / materials** - `client/src/render/*.ts` build
-  `MeshStandardMaterial`s with procedural roughness/normal variation and
-  per-instance HSL tint jitter, so repeated geometry does not read as tiled.
+- **Terrain / walls / roofs** - `client/src/render/ProceduralTexture.ts`
+  generates a full albedo/normal/roughness set per material recipe on
+  Canvas2D at load time: seeded multi-octave value noise rasterised to a
+  height field, then albedo (colour mixed by height, with a separate
+  damp/crevice tone blended into the lowest band), roughness (damp reads
+  smoother and darker, dry rougher - "everything is slightly damp" from the
+  brief lives here) and a tangent-space normal map (finite-differenced from
+  the same height field, so the dents in the normal map line up with the
+  dark patches in the albedo) are all derived from that one field.
+  `client/src/render/MaterialRecipes.ts` defines the three recipes actually
+  used - farmland soil/grass for the ground, weathered plaster-over-brick for
+  walls, weathered wood/roofing for roofs - and maps them onto the box
+  colours map generation already produces. `WorldView.ts` builds one texture
+  set per recipe (not per box - a wall and its alt-colour twin share a set)
+  and wires it into both the per-colour box batches and the tiled ground.
+  Ground tiles are uniform size, so a plain repeat-1 box UV never stretches;
+  each tile also gets a random 0/90/180/270 degree turn on its own instance
+  matrix so 1936 tiles sampling one texture do not read as a grid - this is
+  the "world-space UVs" half of the brief's "triplanar or world-space UVs"
+  allowance, chosen over a triplanar shader as materially lower-risk to get
+  right without WebGL to screenshot against. Non-ground boxes vary in size
+  but get a fixed moderate repeat rather than a per-box one, a deliberate,
+  documented approximation given the same constraint.
+- **Not textured** - `Decor.ts`'s fence posts/rails, window frames and
+  eaves stay flat-tinted `MeshStandardMaterial`. They are thin trim geometry
+  where a full PBR set would cost another texture-set build (and its own
+  slice of the texture-memory budget) for detail that reads as a few pixels
+  at typical view distance; the brief's own material list is dominated by
+  ground, wall and roof surfaces, which is where the budget went instead.
+- **Categories the brief names that do not apply here** - wet asphalt,
+  gravel, concrete, corrugated and rusted metal have no corresponding
+  geometry in this map generator (no roads, no metal props), so there is
+  nothing for those recipes to attach to. Recorded here rather than silently
+  dropped.
 
-This section is updated as further procedural work lands - materials proper
-(Canvas2D-generated albedo/normal/roughness/AO, triplanar terrain UVs) and the
-rural environment dressing are still in progress at the time of writing.
+Every texture is generated at its quality tier's resolution (128 to 1024px
+depending on Low through Ultra) straight into a `THREE.CanvasTexture` - there
+is no download, no disk file and no KTX2/Basis step, because there is nothing
+to compress: the "asset" only ever exists as pixels already resident on the
+GPU. See the final report for the per-tier texture-memory estimate this
+produces; the brief's 25MB *payload* budget does not have an analogue to
+apply to zero downloaded bytes, which is stated plainly rather than
+papered over with an unrelated number.
+
+Rural environment dressing (hedgerows, field boundaries, dirt tracks, power
+poles, hay bales, farm fencing, instanced trees/shrubs) is still in progress
+at the time of writing.
 
 If this project is later run somewhere with unrestricted egress, or the
 textures are supplied directly, this file is where their source URLs and

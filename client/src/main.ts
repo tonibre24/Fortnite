@@ -517,7 +517,7 @@ function frame(): void {
     worldView?.dispose(renderer.scene);
     decor?.dispose(renderer.scene);
     playerView.dispose();
-    worldView = new WorldView(renderer.scene, client.map, renderer.setupCascadeMaterial);
+    worldView = new WorldView(renderer.scene, client.map, renderer.setupCascadeMaterial, renderer.quality.textureSize);
     decor = new Decor(
       renderer.scene,
       client.map,

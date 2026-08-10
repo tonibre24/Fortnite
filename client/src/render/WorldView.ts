@@ -8,6 +8,20 @@ import {
   type GameMap,
   type MapBox,
 } from '@br/shared';
+import { GROUND_RECIPE, RECIPE_BY_COLOR } from './MaterialRecipes.js';
+import { buildTextureSet, type MaterialRecipe, type TextureSet } from './ProceduralTexture.js';
+
+/**
+ * Every wall/roof box gets this repeat regardless of its own footprint:
+ * BoxGeometry's default UVs are already 0..1 per face, so there is no
+ * per-world-unit size to key a repeat off without a triplanar shader. The
+ * brief allows "triplanar or world-space UVs" - this is the world-space-UV
+ * side of that choice, at the cost of large and small boxes showing the
+ * texture at the same frequency. See ASSET_CREDITS.md.
+ */
+const BOX_TEXTURE_REPEAT = 2.5;
+/** Ground tiles are uniform size, so one texture per tile never stretches. */
+const GROUND_TEXTURE_REPEAT = 1;
 
 /**
  * Draws the map.
@@ -25,15 +39,33 @@ export class WorldView {
   private readonly group = new THREE.Group();
   private readonly geometry = new THREE.BoxGeometry(1, 1, 1);
   private readonly materials: THREE.Material[] = [];
+  private readonly textureSets: TextureSet[] = [];
 
   constructor(
     scene: THREE.Scene,
     map: GameMap,
     private readonly setupCascadeMaterial: (material: THREE.Material) => void,
+    textureSize: number,
   ) {
     // Same salt as the decoration stream, drawn after it so the two never
     // interleave; both are reproducible from the map seed alone.
     const rng = new Rng((map.seed ^ DECOR_SEED_SALT ^ 0x1234) >>> 0);
+
+    // One texture set per distinct recipe, not per box colour - COLOR_WALL and
+    // COLOR_WALL_ALT both point at WALL_RECIPE and share a single set. Seeding
+    // off the colour that first requests a recipe keeps this fully
+    // deterministic from the map seed while giving each recipe its own noise
+    // instead of every material echoing an identical pattern.
+    const textureCache = new Map<MaterialRecipe, TextureSet>();
+    const textureFor = (recipe: MaterialRecipe, salt: number): TextureSet => {
+      let set = textureCache.get(recipe);
+      if (set === undefined) {
+        set = buildTextureSet(recipe, textureSize, (map.seed ^ salt) >>> 0);
+        textureCache.set(recipe, set);
+        this.textureSets.push(set);
+      }
+      return set;
+    };
 
     const byColor = new Map<number, MapBox[]>();
     let ground: MapBox | null = null;
@@ -55,7 +87,11 @@ export class WorldView {
     const tint = new THREE.Color();
 
     for (const [color, boxes] of byColor) {
-      const material = new THREE.MeshStandardMaterial({ color: 0xffffff, flatShading: true, roughness: 0.92, metalness: 0 });
+      const recipe = RECIPE_BY_COLOR.get(color);
+      const material =
+        recipe === undefined
+          ? new THREE.MeshStandardMaterial({ color: 0xffffff, flatShading: true, roughness: 0.92, metalness: 0 })
+          : texturedMaterial(textureFor(recipe, color), BOX_TEXTURE_REPEAT);
       this.setupCascadeMaterial(material);
       this.materials.push(material);
       const mesh = new THREE.InstancedMesh(this.geometry, material, boxes.length);
@@ -84,7 +120,7 @@ export class WorldView {
       this.group.add(mesh);
     }
 
-    if (ground !== null) this.tiledGround(ground, rng);
+    if (ground !== null) this.tiledGround(ground, rng, textureFor(GROUND_RECIPE, ground.color));
     scene.add(this.group);
   }
 
@@ -97,12 +133,12 @@ export class WorldView {
    * and motion against. The collider is untouched - this is only how it is
    * drawn.
    */
-  private tiledGround(ground: MapBox, rng: Rng): void {
+  private tiledGround(ground: MapBox, rng: Rng, textures: TextureSet): void {
     // Independent random per tile reads as a checkerboard - the eye locks onto
     // the grid immediately. Two octaves of value noise give neighbouring tiles
     // similar colours, so the variation becomes patches of ground instead.
     const noise = valueNoise(rng);
-    const material = new THREE.MeshStandardMaterial({ color: 0xffffff, flatShading: true, roughness: 0.96, metalness: 0 });
+    const material = texturedMaterial(textures, GROUND_TEXTURE_REPEAT);
     this.setupCascadeMaterial(material);
     this.materials.push(material);
     const tiles = GROUND_TILES * GROUND_TILES;
@@ -114,6 +150,10 @@ export class WorldView {
     const centreY = (ground.minY + ground.maxY) / 2;
 
     const matrix = new THREE.Matrix4();
+    const position = new THREE.Vector3();
+    const quaternion = new THREE.Quaternion();
+    const scale = new THREE.Vector3();
+    const axisY = new THREE.Vector3(0, 1, 0);
     const base = new THREE.Color(ground.color);
     const tint = new THREE.Color();
 
@@ -122,12 +162,17 @@ export class WorldView {
       for (let iz = 0; iz < GROUND_TILES; iz++) {
         // A hair of overlap, so neighbouring tiles never show a seam of sky
         // through a floating-point gap.
-        matrix.makeScale(width * 1.002, height, depth * 1.002);
-        matrix.setPosition(
+        scale.set(width * 1.002, height, depth * 1.002);
+        position.set(
           ground.minX + (ix + 0.5) * width,
           centreY,
           ground.minZ + (iz + 0.5) * depth,
         );
+        // Every tile samples the same texture, so a random quarter-turn per
+        // instance is what stops the grid reading as one image repeated - the
+        // tiles are square, so a 90 degree step never opens a seam.
+        quaternion.setFromAxisAngle(axisY, (rng.int(0, 3) * Math.PI) / 2);
+        matrix.compose(position, quaternion, scale);
         mesh.setMatrixAt(index, matrix);
         const n = noise(ix * 0.16, iz * 0.16) * 0.65 + noise(ix * 0.42, iz * 0.42) * 0.35;
         tint.copy(base).offsetHSL(
@@ -155,8 +200,27 @@ export class WorldView {
       if (child instanceof THREE.InstancedMesh) child.dispose();
     }
     for (const material of this.materials) material.dispose();
+    for (const set of this.textureSets) set.dispose();
     this.geometry.dispose();
   }
+}
+
+/** Builds a MeshStandardMaterial from a generated texture set at a given UV repeat. */
+function texturedMaterial(set: TextureSet, repeat: number): THREE.MeshStandardMaterial {
+  set.map.repeat.set(repeat, repeat);
+  set.normalMap.repeat.set(repeat, repeat);
+  set.roughnessMap.repeat.set(repeat, repeat);
+  return new THREE.MeshStandardMaterial({
+    map: set.map,
+    normalMap: set.normalMap,
+    roughnessMap: set.roughnessMap,
+    flatShading: true,
+    // The roughness map already carries the real value per texel; leaving the
+    // scalar at 1 makes it a pure multiplier identity instead of darkening
+    // the map a second time.
+    roughness: 1,
+    metalness: 0,
+  });
 }
 
 /**

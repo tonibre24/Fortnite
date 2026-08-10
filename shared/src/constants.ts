@@ -356,10 +356,17 @@ export const SUN_ELEVATION = 0.62;
 /** Deliberately weak - per the brief, nearly all light on an overcast day is ambient sky light. */
 export const SUN_INTENSITY = 0.55;
 export const SUN_COLOR = 0xd7dde2;
-/** Sky and bounce fill. Modest: scene.environment (baked from the sky below) carries most of the ambient term. */
+/**
+ * Sky and bounce fill. scene.environment (baked from the sky below) carries
+ * the reflective/specular part of the ambient term, but upward-facing
+ * surfaces lit only by this and a grazing-angle sun (farmland, rooftops)
+ * measured too dark against the brief's own "damp farmland valley" reference
+ * at the original 0.55 - a true overcast sky is a giant soft box with very
+ * little falloff away from direct sun, which this raises it toward.
+ */
 export const HEMI_SKY_COLOR = 0x9aa7ad;
 export const HEMI_GROUND_COLOR = 0x5c5f4e;
-export const HEMI_INTENSITY = 0.55;
+export const HEMI_INTENSITY = 0.85;
 /** Tonemap exposure. One tunable knob rather than baked into every light. */
 export const EXPOSURE = 1.0;
 
@@ -445,6 +452,11 @@ export const WINDOW_SPACING = 4.0;
 export const WINDOW_FRAME = 0.14;
 export const COLOR_GLASS = 0x2c4456;
 export const COLOR_TRIM = 0x6b6055;
+
+/** Damp/crevice tones the procedural PBR recipes blend towards in low spots. */
+export const COLOR_DAMP_SOIL = 0x2b2318;
+export const COLOR_DAMP_PLASTER = 0x4a4a42;
+export const COLOR_DAMP_WOOD = 0x2e211c;
 /** Overhang of the eaves past the wall line. */
 export const EAVE_OVERHANG = 0.45;
 export const EAVE_THICKNESS = 0.22;
