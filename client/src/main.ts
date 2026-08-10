@@ -41,9 +41,11 @@ import { PlayerView } from './render/PlayerView.js';
 import { loadStoredTier, QUALITY_TIER_NAMES, QualityTier, storeTier, type QualityTierId } from './render/Quality.js';
 import { Renderer } from './render/Renderer.js';
 import { Decor } from './render/Decor.js';
+import { FarmDressing } from './render/FarmDressing.js';
 import { LootView } from './render/LootView.js';
 import { RoundView } from './render/RoundView.js';
 import { Tracers } from './render/Tracers.js';
+import { Vegetation } from './render/Vegetation.js';
 import { Vfx } from './render/Vfx.js';
 import { WorldView } from './render/WorldView.js';
 import { Hud } from './ui/Hud.js';
@@ -118,6 +120,8 @@ hud.onQualityChange = (tier) => {
 
 let worldView: WorldView | null = null;
 let decor: Decor | null = null;
+let vegetation: Vegetation | null = null;
+let farmDressing: FarmDressing | null = null;
 let worldVersion = -1;
 /**
  * Bumped whenever the shadow rig is rebuilt with a different cascade count.
@@ -205,6 +209,11 @@ function updateAutoBenchmark(frameMs: number): void {
   benchmarking = false;
 }
 
+/** Instances actually placed across every decorative layer, for the perf overlay and the benchmark. */
+function totalPropCount(): number {
+  return (decor?.propCount ?? 0) + (vegetation?.propCount ?? 0) + (farmDressing?.propCount ?? 0);
+}
+
 function samplePerf(now: number, cpuMs: number, drawMs: number): void {
   if (lastFrameStart !== 0) {
     const delta = now - lastFrameStart;
@@ -227,7 +236,7 @@ function samplePerf(now: number, cpuMs: number, drawMs: number): void {
     `${(cpuTotal / frameSamples).toFixed(2)} ms game  ${(drawTotal / frameSamples).toFixed(2)} ms draw\n` +
     `${renderer.drawCalls} draws  ${(renderer.triangles / 1000).toFixed(0)}k tris\n` +
     `${renderer.textureCount} tex  ${renderer.geometryCount} geo  ${renderer.programCount} prog\n` +
-    `tier ${QUALITY_TIER_NAMES[renderer.qualityTier]}  shadows ${quality.shadows ? `${quality.cascades}csm` : 'off'}  props ${decor?.propCount ?? 0}`;
+    `tier ${QUALITY_TIER_NAMES[renderer.qualityTier]}  shadows ${quality.shadows ? `${quality.cascades}csm` : 'off'}  props ${totalPropCount()}`;
   frameSamples = 0;
   frameTotal = 0;
   cpuTotal = 0;
@@ -264,7 +273,7 @@ hud.setPerfVisible(false);
     tier: QUALITY_TIER_NAMES[renderer.qualityTier],
     shadows: renderer.quality.shadows,
     cascades: renderer.quality.cascades,
-    props: decor?.propCount ?? 0,
+    props: totalPropCount(),
     players: client.playerCount,
   }),
   /** Sets a tier directly and stops the one-shot auto-benchmark from overriding it. */
@@ -516,9 +525,23 @@ function frame(): void {
   ) {
     worldView?.dispose(renderer.scene);
     decor?.dispose(renderer.scene);
+    vegetation?.dispose(renderer.scene);
+    farmDressing?.dispose(renderer.scene);
     playerView.dispose();
     worldView = new WorldView(renderer.scene, client.map, renderer.setupCascadeMaterial, renderer.quality.textureSize);
     decor = new Decor(
+      renderer.scene,
+      client.map,
+      renderer.setupCascadeMaterial,
+      renderer.quality.vegetationDensity,
+    );
+    vegetation = new Vegetation(
+      renderer.scene,
+      client.map,
+      renderer.setupCascadeMaterial,
+      renderer.quality.vegetationDensity,
+    );
+    farmDressing = new FarmDressing(
       renderer.scene,
       client.map,
       renderer.setupCascadeMaterial,
@@ -588,6 +611,7 @@ function frame(): void {
   );
   roundView.update(client.round, now / 1000);
   lootView.update(client.loot, now);
+  vegetation?.update(now / 1000);
   renderer.updateShadows();
   updateAudio();
   tracers.update(now);

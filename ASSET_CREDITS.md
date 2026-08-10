@@ -97,9 +97,44 @@ produces; the brief's 25MB *payload* budget does not have an analogue to
 apply to zero downloaded bytes, which is stated plainly rather than
 papered over with an unrelated number.
 
-Rural environment dressing (hedgerows, field boundaries, dirt tracks, power
-poles, hay bales, farm fencing, instanced trees/shrubs) is still in progress
-at the time of writing.
+## Rural dressing
+
+Also code-generated, also client-side, also decorative-only:
+
+- **Shrubs and hedgerows** - `client/src/render/Vegetation.ts`. Each plant
+  is two crossed unit cards (an instanced "cross-billboard", not a
+  camera-facing sprite - it is placed once and never re-oriented per frame),
+  textured with a small alpha-cutout foliage clump rendered to Canvas2D as a
+  handful of overlapping soft-edged blobs. The material is an ordinary
+  `MeshStandardMaterial` - full CSM shadows and the baked sky IBL apply
+  exactly as they do to every other surface - with a small `onBeforeCompile`
+  patch adding the one thing a stock material can't: wind sway, keyed off
+  each vertex's height on its own billboard so the sway grows toward the top
+  and the root stays planted. Scatter probability falls off with distance
+  from the nearest POI (`VEGETATION_FALLOFF_RADIUS`), reading as busiest near
+  the farmsteads it borders and thinning into open field beyond them - the
+  brief's "distance-based density falloff," applied at placement time rather
+  than as a per-frame camera-distance fade, which is not a difference a
+  player can tell apart in a mostly-static scatter. The same billboard is
+  packed at hedge density along the map's field-boundary lines.
+- **Field boundaries** - `client/src/render/fieldBoundaries.ts` divides the
+  map into a grid of straight interior lines and commits each one to either a
+  hedge (above) or a low fence, by a hash of the map seed and the line's own
+  index rather than a shared RNG draw - Vegetation and FarmDressing each call
+  it independently at their own instance spacing and still agree on which
+  lines are which.
+- **Dirt tracks, power poles, hay bales** - `client/src/render/FarmDressing.ts`.
+  Tracks are instanced ground-hugging segments linking the POIs along a
+  simple nearest-earlier-neighbour spanning tree, following terrain height as
+  they go. A subset of poles walks the same tracks at fixed spacing; the
+  sagging cable between each consecutive pair is a handful of straight
+  sub-segments approximating a catenary, drawn as one `THREE.LineSegments`
+  for every span in the map rather than per-pole geometry. Hay bales are
+  cylinders rotated onto their side, scattered with the same POI-distance
+  falloff as open-field shrubs.
+- **Not attempted** - wet asphalt has no analogue here either, for the same
+  reason as the wall/roof categories above: this generator has no roads, only
+  the dirt tracks described above.
 
 If this project is later run somewhere with unrestricted egress, or the
 textures are supplied directly, this file is where their source URLs and

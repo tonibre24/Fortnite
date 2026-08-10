@@ -461,6 +461,56 @@ export const COLOR_DAMP_WOOD = 0x2e211c;
 export const EAVE_OVERHANG = 0.45;
 export const EAVE_THICKNESS = 0.22;
 
+// --------------------------------------------------------------- countryside
+
+/** Own salted stream - rural dressing must never perturb map generation or DECOR_SEED_SALT's draws. */
+export const FARM_SEED_SALT = 0x9b1e7a2c;
+
+/** Cross-billboard shrubs, scattered with density falling off away from the farmsteads (POIs). */
+export const VEGETATION_COUNT = 1400;
+/** Distance from the nearest POI at which scatter probability bottoms out. */
+export const VEGETATION_FALLOFF_RADIUS = 95;
+export const VEGETATION_MIN_DENSITY = 0.12;
+export const VEGETATION_MIN_HEIGHT = 1.1;
+export const VEGETATION_MAX_HEIGHT = 2.3;
+export const VEGETATION_MIN_WIDTH = 0.9;
+export const VEGETATION_MAX_WIDTH = 1.7;
+/** World units of horizontal sway at the top of a full-height billboard. */
+export const VEGETATION_WIND_STRENGTH = 0.12;
+export const COLOR_SHRUB_A = 0x4f6b34;
+export const COLOR_SHRUB_B = 0x3c5828;
+
+/**
+ * Hedgerows and field boundaries: a grid of divider lines across open ground,
+ * each realised as either a dense shrub row or a low fence. Skirts POIs, the
+ * spawn ring and hills rather than routing through them.
+ */
+export const FIELD_GRID = 6;
+export const HEDGE_SPACING = 1.05;
+export const HEDGE_CHANCE = 0.6;
+export const FENCE_POST_SPACING = 2.4;
+export const COLOR_FIELD_FENCE = 0x6b5a3f;
+
+/** Dirt tracks linking POIs, following terrain height along the way. */
+export const TRACK_WIDTH = 3.2;
+export const TRACK_SEGMENT_LENGTH = 5;
+export const COLOR_DIRT_TRACK = 0x4a3d2a;
+
+/** Power poles strung along a subset of tracks, cables sagging between them. */
+export const POLE_SPACING = 24;
+export const POLE_HEIGHT = 7.5;
+export const POLE_CROSSARM_WIDTH = 1.8;
+export const POLE_CROSSARM_HEIGHT = 6.6;
+export const CABLE_SAG = 0.9;
+export const COLOR_POLE = 0x4a3c2e;
+export const COLOR_CABLE = 0x1c1c1c;
+
+/** Round hay bales scattered near the farmsteads, same falloff as vegetation. */
+export const HAY_BALE_COUNT = 46;
+export const HAY_BALE_RADIUS = 0.55;
+export const HAY_BALE_LENGTH = 1.4;
+export const COLOR_HAY = 0xc9a339;
+
 // ----------------------------------------------------------------------- vfx
 
 /**
