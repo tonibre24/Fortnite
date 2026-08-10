@@ -34,6 +34,8 @@ export class WorldView {
       }
       mesh.instanceMatrix.needsUpdate = true;
       mesh.frustumCulled = false;
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
       this.group.add(mesh);
     }
 

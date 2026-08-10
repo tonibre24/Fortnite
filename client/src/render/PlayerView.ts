@@ -39,6 +39,8 @@ export class PlayerView {
     const mesh = new THREE.InstancedMesh(geometry, this.material, MAX_PLAYERS);
     mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     mesh.frustumCulled = false;
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
     mesh.count = 0;
     this.group.add(mesh);
     return mesh;

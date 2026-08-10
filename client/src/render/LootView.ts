@@ -48,6 +48,7 @@ export class LootView {
       );
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       mesh.frustumCulled = false;
+      mesh.castShadow = true;
       mesh.count = 0;
       this.buckets.push(mesh);
       this.group.add(mesh);

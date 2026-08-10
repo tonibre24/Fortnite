@@ -324,6 +324,48 @@ export const MINIMAP_PLAYER_SIZE = 5;
 /** Frames averaged before the HUD updates its frame-time figure. */
 export const PERF_SAMPLE_FRAMES = 30;
 
+// -------------------------------------------------------------------- visuals
+
+/**
+ * Late afternoon. Committing to one time of day is what makes the palette
+ * coherent: a low sun gives long shadows that show which way a surface faces,
+ * which is how a player reads geometry at a glance.
+ */
+export const SUN_AZIMUTH = 2.35;
+export const SUN_ELEVATION = 0.42;
+export const SUN_INTENSITY = 2.9;
+export const SUN_COLOR = 0xffe6c2;
+/** Sky and bounce fill, so shadowed faces stay readable instead of going black. */
+export const HEMI_SKY_COLOR = 0x9fc4e8;
+export const HEMI_GROUND_COLOR = 0x6b7a4a;
+export const HEMI_INTENSITY = 1.45;
+
+/** Sky gradient, top to horizon, plus the warm band the sun sits in. */
+export const SKY_TOP_COLOR = 0x4f8fd6;
+export const SKY_HORIZON_COLOR = 0xbcd8e8;
+export const SKY_HAZE_COLOR = 0xf2d3a8;
+/** Where the horizon band sits in the gradient, 0 = bottom, 1 = top. */
+export const SKY_HORIZON_HEIGHT = 0.5;
+export const SKY_HAZE_WIDTH = 0.09;
+
+/** Fog is matched to the horizon so the map edge dissolves rather than ends. */
+export const FOG_NEAR = 120;
+export const FOG_FAR = 460;
+
+/**
+ * The shadow frustum follows the player rather than covering the map. A 500x500
+ * map in one map would be unusably coarse; this keeps texels small where they
+ * are actually looked at.
+ */
+export const SHADOW_MAP_SIZE = 2048;
+export const SHADOW_RADIUS = 55;
+export const SHADOW_DEPTH = 260;
+export const SHADOW_BIAS = -0.0012;
+export const SHADOW_NORMAL_BIAS = 0.02;
+
+/** Per-instance hue jitter, so repeated props do not read as tiled. */
+export const PROP_TINT_JITTER = 0.11;
+
 // --------------------------------------------------------------------- audio
 
 /** Master volume before the player touches the slider, and where it persists. */

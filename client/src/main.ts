@@ -364,6 +364,7 @@ function frame(): void {
   );
   roundView.update(client.round);
   lootView.update(client.loot, now);
+  renderer.focusShadows(renderer.camera.position);
   updateAudio();
   tracers.update(now);
   tracers.flush();
