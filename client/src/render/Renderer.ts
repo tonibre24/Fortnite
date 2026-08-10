@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { CSM } from 'three/examples/jsm/csm/CSM.js';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
+import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { SSAOPass } from 'three/examples/jsm/postprocessing/SSAOPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
@@ -10,7 +11,10 @@ import {
   BLOOM_RADIUS,
   BLOOM_STRENGTH,
   BLOOM_THRESHOLD,
+  ENVIRONMENT_INTENSITY,
   EXPOSURE,
+  FILL_LIGHT_COLOR,
+  FILL_LIGHT_INTENSITY,
   FOG_FAR,
   FOG_NEAR,
   FOG_TINT,
@@ -54,6 +58,7 @@ export class Renderer {
   private readonly renderer: THREE.WebGLRenderer;
   private readonly sky: Sky;
   private readonly hemi: THREE.HemisphereLight;
+  private readonly fill: THREE.DirectionalLight;
   private readonly pmrem: THREE.PMREMGenerator;
   private csm: CSM;
   private composer: EffectComposer;
@@ -99,6 +104,20 @@ export class Renderer {
     this.hemi = new THREE.HemisphereLight(HEMI_SKY_COLOR, HEMI_GROUND_COLOR, HEMI_INTENSITY);
     this.scene.add(this.hemi);
 
+    // Stands in for bounce light off the ground: HemisphereLight's
+    // groundColor term barely touches an upward-facing normal (see
+    // FILL_LIGHT_COLOR's doc comment), so flat ground stayed dark at wide
+    // angles even with the sky lights raised. three.js DirectionalLight
+    // shines from (position - target), so the light must sit above the
+    // target to illuminate an upward-facing normal - no shadows, it is a
+    // fill, not a second sun.
+    this.fill = new THREE.DirectionalLight(FILL_LIGHT_COLOR, FILL_LIGHT_INTENSITY);
+    this.fill.position.set(0, 1, 0);
+    this.fill.target.position.set(0, 0, 0);
+    this.fill.castShadow = false;
+    this.scene.add(this.fill);
+    this.scene.add(this.fill.target);
+
     this.pmrem = new THREE.PMREMGenerator(this.renderer);
     this.bakeEnvironment();
 
@@ -126,7 +145,7 @@ export class Renderer {
     bakeScene.add(bakeMesh);
     const rendered = this.pmrem.fromScene(bakeScene, 0, 0.1, 2000);
     this.scene.environment = rendered.texture;
-    this.scene.environmentIntensity = 1;
+    this.scene.environmentIntensity = ENVIRONMENT_INTENSITY;
     bakeMesh.geometry.dispose();
     bakeScene.remove(bakeMesh);
   }
@@ -193,6 +212,17 @@ export class Renderer {
         composer.addPass(fxaa);
         this.fxaaPass = fxaa;
       }
+
+      // EffectComposer's intermediate targets render every pass in raw linear
+      // space on purpose (so bloom etc. operate on correct HDR values) - only
+      // the direct-to-canvas path applies tone mapping and sRGB encoding
+      // automatically. Without this as the final pass, the composer's output
+      // goes to the screen still linear, which the browser then displays as
+      // if it were already sRGB: mid-tones and shadows read far too dark
+      // while only near-white values look plausible. This is what made the
+      // ground read near-black regardless of how far ambient light was
+      // pushed up - the light was landing, the encode to display it was not.
+      composer.addPass(new OutputPass());
     }
 
     return composer;

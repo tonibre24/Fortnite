@@ -369,6 +369,20 @@ export const HEMI_GROUND_COLOR = 0x5c5f4e;
 export const HEMI_INTENSITY = 0.85;
 /** Tonemap exposure. One tunable knob rather than baked into every light. */
 export const EXPOSURE = 1.0;
+/** IBL strength multiplier on top of the baked sky radiance itself. */
+export const ENVIRONMENT_INTENSITY = 1.3;
+
+/**
+ * A second, weak, shadowless light aimed straight down at the ground -
+ * standing in for the bounce off the ground itself. Upward-facing ground
+ * normals get almost none of HemisphereLight's groundColor term (that only
+ * kicks in for normals tilted well away from "up"), so a flat, undamaged,
+ * perfectly-lit ground still measured too dark at grazing/wide-shot angles
+ * even after the HEMI_INTENSITY raise above. This targets exactly that
+ * surface instead of brightening everything uniformly.
+ */
+export const FILL_LIGHT_COLOR = 0x6f7a5e;
+export const FILL_LIGHT_INTENSITY = 0.4;
 
 /** Sky gradient, top to horizon - deliberately close together for a flat, hazy overcast dome. */
 export const SKY_TOP_COLOR = 0xaeb7bb;

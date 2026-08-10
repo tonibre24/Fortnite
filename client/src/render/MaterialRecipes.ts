@@ -28,7 +28,10 @@ export const GROUND_RECIPE: MaterialRecipe = {
   colorLow: COLOR_DAMP_SOIL,
   baseRoughness: 0.88,
   roughnessVariance: 0.3,
-  normalStrength: 2.2,
+  // Was 2.2 - at grazing/wide-shot angles that many strongly-perturbed
+  // texels pushed dot(normal, sun) toward zero across enough of the ground
+  // at once to read as patchy near-black, rather than an even damp texture.
+  normalStrength: 1.3,
 };
 
 /** Weathered painted plaster over brick, for building walls. */
