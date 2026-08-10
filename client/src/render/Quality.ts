@@ -63,6 +63,12 @@ const TIERS: Record<QualityTierId, QualitySettings> = {
   },
   [QualityTier.Medium]: {
     shadows: true,
+    // Tested at 2 (see git history/PR notes): +38% draw calls (76→105),
+    // +29% triangles (209k→269k), +45% worst-case CPU time per frame
+    // (1.10ms→1.60ms p99) for a smoother mid-distance shadow transition that
+    // is hard to even see against this game's flat-shaded low-poly look.
+    // Medium is the tier carrying the widest range of modest hardware; that
+    // cost is not worth it there. High and Ultra already run more cascades.
     cascades: 1,
     shadowMapSize: 1024,
     softShadows: false,
