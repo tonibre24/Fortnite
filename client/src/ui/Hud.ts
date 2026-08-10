@@ -94,7 +94,12 @@ export class Hud {
   }
 
   setPerf(text: string): void {
+    if (this.perfEl.style.display === 'none') return;
     this.perfEl.textContent = text;
+  }
+
+  setPerfVisible(visible: boolean): void {
+    this.perfEl.style.display = visible ? 'block' : 'none';
   }
 
   /** Positions the slider, without firing the change callback. */

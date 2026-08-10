@@ -10,7 +10,12 @@ npm run sim      # headless simulated round — the primary test tool
 npm run check    # tsc --noEmit + vitest
 npm run build    # compile shared + server, bundle the client
 npm start        # serve the whole game from one port (PORT, default 8080)
+npm run bench    # scripted 20-player rendering benchmark, reports the 1% low
+npm run bots N   # fill a running server with simulated players
 ```
+
+Press **F3** in game for the perf overlay: fps, frame time, draw calls,
+triangles, texture and geometry counts, and the live scenery prop count.
 
 ## Sharing it over the internet
 

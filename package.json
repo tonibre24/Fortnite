@@ -18,7 +18,9 @@
     "sim": "tsx tools/sim.ts",
     "check": "npm run typecheck && vitest run",
     "typecheck": "tsc --noEmit -p tsconfig.check.json",
-    "test": "vitest run"
+    "test": "vitest run",
+    "bench": "node tools/bench.mjs",
+    "bots": "tsx tools/bots.ts"
   },
   "devDependencies": {
     "@types/node": "^22.13.1",

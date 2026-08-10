@@ -26,5 +26,11 @@
 - The AudioContext is only created inside a user gesture; browsers block it
   otherwise. Anything positional goes through a PannerNode and is capped by
   category in client/src/audio/AudioSystem.ts.
+- Rendering is client-only. shared/ and server/ must never import three.js, and
+  `npm run check` / `npm run sim` run headless with no WebGL.
+- shared/src/map.ts is authoritative collision data shared with the server.
+  Decoration is additive and client-side; never change a collider for looks and
+  never let a visual touch the seeded map hash.
+- Repeated props go in an InstancedMesh - one draw call per prop type.
 - Run `npm run check` and `npm run sim` after every change.
 - One phase = one commit. Stop and summarize after each phase.

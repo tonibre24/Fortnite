@@ -9,6 +9,7 @@ import {
   PICKUP_RANGE,
   PLAYER_EYE_HEIGHT,
   MoveMode,
+  PERF_LOG_MAX,
   PERF_SAMPLE_FRAMES,
   RoundPhase,
   SHIELD_POTION_USE_TICKS,
@@ -108,12 +109,27 @@ let drawTotal = 0;
 let lastFrameStart = 0;
 let perfText = '';
 
+/**
+ * Every frame time since the page loaded, capped so a long session cannot grow
+ * without bound. The benchmark reads this to compute percentiles - an average
+ * hides exactly the hitches that make a game feel bad, so the number that
+ * matters is the 1% low.
+ */
+const frameLog: number[] = [];
+/** The CPU half of each frame, which unlike the draw is not GPU-bound. */
+const cpuLog: number[] = [];
+
 function samplePerf(now: number, cpuMs: number, drawMs: number): void {
   if (lastFrameStart !== 0) {
-    frameTotal += now - lastFrameStart;
+    const delta = now - lastFrameStart;
+    frameTotal += delta;
     cpuTotal += cpuMs;
     drawTotal += drawMs;
     frameSamples += 1;
+    if (frameLog.length < PERF_LOG_MAX) {
+      frameLog.push(delta);
+      cpuLog.push(cpuMs);
+    }
   }
   lastFrameStart = now;
   if (frameSamples < PERF_SAMPLE_FRAMES) return;
@@ -121,12 +137,48 @@ function samplePerf(now: number, cpuMs: number, drawMs: number): void {
   perfText =
     `${(1000 / frame).toFixed(0)} fps  ${frame.toFixed(1)} ms/frame\n` +
     `${(cpuTotal / frameSamples).toFixed(2)} ms game  ${(drawTotal / frameSamples).toFixed(2)} ms draw\n` +
-    `${renderer.drawCalls} draws  ${(renderer.triangles / 1000).toFixed(0)}k tris`;
+    `${renderer.drawCalls} draws  ${(renderer.triangles / 1000).toFixed(0)}k tris\n` +
+    `${renderer.textureCount} tex  ${renderer.geometryCount} geo  ${renderer.programCount} prog\n` +
+    `shadows ${renderer.shadows ? 'on' : 'off'}  props ${decor?.propCount ?? 0}`;
   frameSamples = 0;
   frameTotal = 0;
   cpuTotal = 0;
   drawTotal = 0;
 }
+
+/**
+ * The overlay is off by default and toggled with F3: it is a developer readout,
+ * not part of the game's presentation, and it costs a DOM write every sample.
+ */
+let perfVisible = false;
+window.addEventListener('keydown', (event) => {
+  if (event.code !== 'F3') return;
+  event.preventDefault();
+  perfVisible = !perfVisible;
+  hud.setPerfVisible(perfVisible);
+});
+hud.setPerfVisible(false);
+
+// Read by tools/bench.mjs. Deliberately the only global this module exposes.
+(window as unknown as Record<string, unknown>).__perf = {
+  frames: frameLog,
+  cpu: cpuLog,
+  reset: () => {
+    frameLog.length = 0;
+    cpuLog.length = 0;
+  },
+  stats: () => ({
+    draws: renderer.drawCalls,
+    triangles: renderer.triangles,
+    textures: renderer.textureCount,
+    geometries: renderer.geometryCount,
+    programs: renderer.programCount,
+    shadows: renderer.shadows,
+    props: decor?.propCount ?? 0,
+    players: client.playerCount,
+  }),
+  setShadows: (on: boolean) => renderer.setShadowsEnabled(on),
+};
 
 /** The nearest item within reach, which is what E would take. */
 function itemInReach(): { label: string; chest: boolean } | null {

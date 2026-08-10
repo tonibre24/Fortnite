@@ -323,6 +323,8 @@ export const MINIMAP_PLAYER_SIZE = 5;
 
 /** Frames averaged before the HUD updates its frame-time figure. */
 export const PERF_SAMPLE_FRAMES = 30;
+/** Cap on the retained frame-time log, so a long session cannot grow forever. */
+export const PERF_LOG_MAX = 20000;
 
 // -------------------------------------------------------------------- visuals
 
