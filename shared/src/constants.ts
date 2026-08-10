@@ -388,6 +388,43 @@ export const COLOR_PEBBLE = 0x8d8b84;
  */
 export const GROUND_TILES = 44;
 
+/**
+ * Building trim. Windows are drawn as glass panels flush to the wall rather
+ * than as holes: the wall is a collider shared with the server, and cutting an
+ * opening for looks would change the seeded map hash. So they read as glazed
+ * windows, not as gaps you can shoot through.
+ */
+export const WINDOW_WIDTH = 1.5;
+export const WINDOW_HEIGHT = 1.3;
+export const WINDOW_SILL = 1.1;
+export const WINDOW_SPACING = 4.0;
+export const WINDOW_FRAME = 0.14;
+export const COLOR_GLASS = 0x2c4456;
+export const COLOR_TRIM = 0x6b6055;
+/** Overhang of the eaves past the wall line. */
+export const EAVE_OVERHANG = 0.45;
+export const EAVE_THICKNESS = 0.22;
+
+// ----------------------------------------------------------------------- vfx
+
+/**
+ * Effect pools. Sized once at startup and never grown: an effect that
+ * allocates mid-frame is one that stutters as soon as the collector notices,
+ * and sustained fire is the worst moment for that.
+ */
+export const VFX_MAX_FLASHES = 24;
+export const VFX_MAX_SPARKS = 320;
+export const VFX_MAX_DUST = 96;
+export const VFX_SPARKS_PER_HIT = 6;
+export const VFX_FLASH_LIFETIME_MS = 55;
+export const VFX_SPARK_LIFETIME_MS = 420;
+export const VFX_DUST_LIFETIME_MS = 620;
+export const VFX_SPARK_SPEED = 7;
+/** Distance over which a tracer fades out, so far shots do not draw hard lines. */
+export const TRACER_FADE_DISTANCE = 140;
+/** Screen tint when hit, and when standing in the storm. */
+export const VIGNETTE_DAMAGE_MS = 420;
+
 // --------------------------------------------------------------------- audio
 
 /** Master volume before the player touches the slider, and where it persists. */

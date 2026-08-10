@@ -1,9 +1,22 @@
 import * as THREE from 'three';
 import {
+  BUILDING_DOOR_HEIGHT,
+  BUILDING_DOOR_WIDTH,
+  BUILDING_MAX_STOREYS,
+  BUILDING_STOREY_HEIGHT,
+  COLOR_GLASS,
   COLOR_GRASS_A,
   COLOR_GRASS_B,
   COLOR_PEBBLE,
+  COLOR_TRIM,
   COLOR_WALL,
+  EAVE_OVERHANG,
+  EAVE_THICKNESS,
+  WINDOW_FRAME,
+  WINDOW_HEIGHT,
+  WINDOW_SILL,
+  WINDOW_SPACING,
+  WINDOW_WIDTH,
   DECOR_FENCE_CHANCE,
   DECOR_GRASS_COUNT,
   DECOR_PEBBLE_COUNT,
@@ -52,6 +65,7 @@ export class Decor {
     this.grass(rng, map);
     this.pebbles(rng, map);
     this.fences(rng, map);
+    this.buildingTrim(rng, map);
 
     scene.add(this.group);
   }
@@ -251,6 +265,124 @@ export class Decor {
             this.place(rails, matrix, base, tint, rng);
             scale.set(1, 1, 1);
           }
+        }
+      }
+    }
+  }
+
+  /**
+   * Windows, door frames and eaves.
+   *
+   * The windows are glass panels sitting flush against the wall, not openings.
+   * A wall is a collider the server also has, and cutting a hole through one to
+   * make it look better would change the seeded map hash - so these are glazed
+   * windows rather than gaps. They read correctly and they do not lie about
+   * where a bullet can go, because nothing here is passable either way.
+   */
+  private buildingTrim(rng: Rng, map: GameMap): void {
+    const panel = new THREE.BoxGeometry(1, 1, 0.08);
+    const bar = new THREE.BoxGeometry(1, 1, 1);
+    const slab = new THREE.BoxGeometry(1, 1, 1);
+
+    // Four walls, up to two storeys, a handful of windows per wall.
+    const perBuilding = 4 * BUILDING_MAX_STOREYS * 6;
+    const glass = this.batch(panel, COLOR_GLASS, map.buildings.length * perBuilding + 1, false);
+    const frames = this.batch(bar, COLOR_TRIM, map.buildings.length * perBuilding * 4 + 8, false);
+    const eaves = this.batch(slab, COLOR_TRIM, map.buildings.length * BUILDING_MAX_STOREYS + 1, true);
+
+    const matrix = new THREE.Matrix4();
+    const position = new THREE.Vector3();
+    const quaternion = new THREE.Quaternion();
+    const scale = new THREE.Vector3();
+    const axis = new THREE.Vector3(0, 1, 0);
+    const glassBase = new THREE.Color(COLOR_GLASS);
+    const trimBase = new THREE.Color(COLOR_TRIM);
+    const tint = new THREE.Color();
+
+    for (const b of map.buildings) {
+      const width = b.maxX - b.minX;
+      const depth = b.maxZ - b.minZ;
+      const cx = (b.minX + b.maxX) / 2;
+      const cz = (b.minZ + b.maxZ) / 2;
+
+      // Eaves: a thin overhanging slab capping the walls, which is what most
+      // reads as "this building has a roof" from ground level.
+      const top = b.baseY + b.storeys * BUILDING_STOREY_HEIGHT;
+      scale.set(width + EAVE_OVERHANG * 2, EAVE_THICKNESS, depth + EAVE_OVERHANG * 2);
+      position.set(cx, top + EAVE_THICKNESS / 2, cz);
+      quaternion.identity();
+      matrix.compose(position, quaternion, scale);
+      this.place(eaves, matrix, trimBase, tint, rng);
+
+      // 0 = -Z wall, 1 = +Z, 2 = -X, 3 = +X, matching Building.doorSide.
+      const walls: Array<{ nx: number; nz: number; span: number; angle: number }> = [
+        { nx: 0, nz: -1, span: width, angle: 0 },
+        { nx: 0, nz: 1, span: width, angle: Math.PI },
+        { nx: -1, nz: 0, span: depth, angle: -Math.PI / 2 },
+        { nx: 1, nz: 0, span: depth, angle: Math.PI / 2 },
+      ];
+
+      for (let side = 0; side < walls.length; side++) {
+        const wall = walls[side]!;
+        const count = Math.max(1, Math.floor((wall.span - 2) / WINDOW_SPACING));
+        quaternion.setFromAxisAngle(axis, wall.angle);
+        // Just proud of the wall face, so it never z-fights with the collider.
+        const outX = wall.nx * (wall.nx === 0 ? depth / 2 : width / 2) + wall.nx * 0.06;
+        const outZ = wall.nz * (wall.nz === 0 ? width / 2 : depth / 2) + wall.nz * 0.06;
+
+        for (let storey = 0; storey < b.storeys; storey++) {
+          const sillY = b.baseY + storey * BUILDING_STOREY_HEIGHT + WINDOW_SILL;
+          for (let i = 0; i < count; i++) {
+            const along = ((i + 0.5) / count - 0.5) * wall.span;
+            // The doorway occupies the middle of its wall on the ground floor.
+            if (side === b.doorSide && storey === 0 && Math.abs(along) < BUILDING_DOOR_WIDTH) continue;
+
+            const ox = wall.nx === 0 ? along : 0;
+            const oz = wall.nz === 0 ? along : 0;
+            const x = cx + ox + outX;
+            const z = cz + oz + outZ;
+            const y = sillY + WINDOW_HEIGHT / 2;
+
+            scale.set(WINDOW_WIDTH, WINDOW_HEIGHT, 1);
+            position.set(x, y, z);
+            matrix.compose(position, quaternion, scale);
+            this.place(glass, matrix, glassBase, tint, rng);
+
+            // Four bars around the glass. Cheap, and it is the frame that makes
+            // a flat panel read as a window rather than a stain on the wall.
+            const edges: Array<[number, number, number, number]> = [
+              [0, WINDOW_HEIGHT / 2, WINDOW_WIDTH + WINDOW_FRAME * 2, WINDOW_FRAME],
+              [0, -WINDOW_HEIGHT / 2, WINDOW_WIDTH + WINDOW_FRAME * 2, WINDOW_FRAME],
+              [-WINDOW_WIDTH / 2, 0, WINDOW_FRAME, WINDOW_HEIGHT],
+              [WINDOW_WIDTH / 2, 0, WINDOW_FRAME, WINDOW_HEIGHT],
+            ];
+            for (const [dx, dy, sw, sh] of edges) {
+              scale.set(sw, sh, 0.1);
+              position.set(x + (wall.nx === 0 ? dx : 0), y + dy, z + (wall.nz === 0 ? dx : 0));
+              matrix.compose(position, quaternion, scale);
+              this.place(frames, matrix, trimBase, tint, rng);
+            }
+          }
+        }
+
+        // Door frame: two jambs and a lintel around the opening in the wall.
+        if (side !== b.doorSide) continue;
+        const doorX = cx + outX;
+        const doorZ = cz + outZ;
+        const jambs: Array<[number, number, number, number]> = [
+          [-BUILDING_DOOR_WIDTH / 2, BUILDING_DOOR_HEIGHT / 2, WINDOW_FRAME * 1.4, BUILDING_DOOR_HEIGHT],
+          [BUILDING_DOOR_WIDTH / 2, BUILDING_DOOR_HEIGHT / 2, WINDOW_FRAME * 1.4, BUILDING_DOOR_HEIGHT],
+          [0, BUILDING_DOOR_HEIGHT, BUILDING_DOOR_WIDTH + WINDOW_FRAME * 2.8, WINDOW_FRAME * 1.4],
+        ];
+        for (const [dx, dy, sw, sh] of jambs) {
+          scale.set(sw, sh, 0.12);
+          position.set(
+            doorX + (wall.nx === 0 ? dx : 0),
+            b.baseY + dy,
+            doorZ + (wall.nz === 0 ? dx : 0),
+          );
+          matrix.compose(position, quaternion, scale);
+          this.place(frames, matrix, trimBase, tint, rng);
         }
       }
     }

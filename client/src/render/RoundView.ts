@@ -1,12 +1,10 @@
 import * as THREE from 'three';
+import { StormWall } from './StormWall.js';
 import {
   BUS_SIZE_X,
   BUS_SIZE_Y,
   BUS_SIZE_Z,
-  COLOR_STORM,
-  MAP_HALF,
   RoundPhase,
-  STORM_WALL_HEIGHT,
   busHeading,
   busPosition,
   vec3,
@@ -14,7 +12,6 @@ import {
 } from '@br/shared';
 
 const BUS_COLOR = 0xe8c46e;
-const STORM_SEGMENTS = 96;
 
 /**
  * The two things that belong to the round rather than to any player: the bus
@@ -27,7 +24,7 @@ const STORM_SEGMENTS = 96;
  */
 export class RoundView {
   private readonly bus: THREE.Mesh;
-  private readonly storm: THREE.Mesh;
+  private readonly storm: StormWall;
   private readonly busPos = vec3();
 
   constructor(scene: THREE.Scene) {
@@ -38,22 +35,10 @@ export class RoundView {
     this.bus.visible = false;
     scene.add(this.bus);
 
-    // An open-ended cylinder drawn from both sides is the wall of the circle.
-    this.storm = new THREE.Mesh(
-      new THREE.CylinderGeometry(1, 1, STORM_WALL_HEIGHT, STORM_SEGMENTS, 1, true),
-      new THREE.MeshBasicMaterial({
-        color: COLOR_STORM,
-        transparent: true,
-        opacity: 0.28,
-        side: THREE.DoubleSide,
-        depthWrite: false,
-      }),
-    );
-    this.storm.visible = false;
-    scene.add(this.storm);
+    this.storm = new StormWall(scene);
   }
 
-  update(round: RoundState): void {
+  update(round: RoundState, seconds: number): void {
     const flying = round.phase === RoundPhase.Bus;
     this.bus.visible = flying;
     if (flying) {
@@ -63,12 +48,6 @@ export class RoundView {
     }
 
     const showStorm = round.phase === RoundPhase.Playing && round.stormRadius > 0;
-    this.storm.visible = showStorm;
-    if (showStorm) {
-      // The cylinder is built at unit radius, so scaling is all it takes.
-      const radius = Math.min(round.stormRadius, MAP_HALF * 2);
-      this.storm.scale.set(radius, 1, radius);
-      this.storm.position.set(round.stormX, STORM_WALL_HEIGHT / 2, round.stormZ);
-    }
+    this.storm.update(showStorm, round.stormX, round.stormZ, round.stormRadius, seconds);
   }
 }

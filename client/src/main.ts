@@ -16,8 +16,14 @@ import {
   StateFlag,
   STORM_PHASES,
   TICK_RATE,
+  COLOR_GROUND,
+  WEAPON_MAX_RANGE,
+  aimDirection,
+  raycastWorld,
+  spreadDirection,
   isConsumableKind,
   itemLabel,
+  outsideStorm,
   resolveServerUrl,
   dequantizePitch,
   dequantizeYaw,
@@ -36,6 +42,7 @@ import { Decor } from './render/Decor.js';
 import { LootView } from './render/LootView.js';
 import { RoundView } from './render/RoundView.js';
 import { Tracers } from './render/Tracers.js';
+import { Vfx } from './render/Vfx.js';
 import { WorldView } from './render/WorldView.js';
 import { Hud } from './ui/Hud.js';
 import { Minimap } from './ui/Minimap.js';
@@ -61,6 +68,7 @@ const playerView = new PlayerView(renderer.scene);
 const tracers = new Tracers(renderer.scene);
 const lootView = new LootView(renderer.scene);
 const roundView = new RoundView(renderer.scene);
+const vfx = new Vfx(renderer.scene);
 const minimap = new Minimap();
 const audio = new GameAudio();
 
@@ -91,11 +99,20 @@ hud.onVolumeChange = (value) => audio.setVolume(value);
 let worldView: WorldView | null = null;
 let decor: Decor | null = null;
 let worldVersion = -1;
+/**
+ * The collision world indexes only the solid boxes, so the same filtered list
+ * is kept here to turn a hit index back into the colour of what was hit.
+ */
+let solidBoxes: readonly { color: number }[] = [];
+const hitQuery: number[] = [];
+let lastFrameTime = 0;
 /** Who the camera follows once the local player is out of the round. */
 let spectating = 0;
 /** Ticks the local player has held fire on a consumable, for the use bar. */
 let useTicks = 0;
 const eye = vec3();
+const aimVec = vec3();
+const pelletVec = vec3();
 
 /**
  * Rolling frame-time readout, split into the game's own work and the draw
@@ -201,6 +218,50 @@ function itemInReach(): { label: string; chest: boolean } | null {
   return best;
 }
 
+/**
+ * Colour of whatever is at a point, so an impact throws dust that matches the
+ * surface. Falls back to the ground colour rather than guessing.
+ */
+function surfaceColorAt(x: number, y: number, z: number): number {
+  if (client.map === null) return COLOR_GROUND;
+  const r = 0.15;
+  client.map.world.query(x - r, y - r, z - r, x + r, y + r, z + r, hitQuery);
+  const first = hitQuery[0];
+  if (first === undefined) return COLOR_GROUND;
+  return solidBoxes[first]?.color ?? COLOR_GROUND;
+}
+
+/** Muzzle flash at the barrel, and an impact wherever each pellet landed. */
+function shotEffects(event: GameEvent & { type: typeof EventType.Shot }, now: number): void {
+  const weapon = unpackWeapon(event.weapon);
+  if (weapon === null || client.map === null) return;
+  const stats = weaponStats(weapon.cls);
+
+  // Shotguns flash bigger than SMGs; it is the cheapest way to make weapon
+  // class readable from across the map.
+  vfx.muzzleFlash(event.x, event.y, event.z, 0.35 + stats.pellets * 0.06, now);
+
+  aimDirection(event.yawQ, event.pitchQ, aimVec);
+  for (let i = 0; i < stats.pellets; i++) {
+    spreadDirection(aimVec, stats.spread, event.shooterId, event.seq, i, pelletVec);
+    const distance = raycastWorld(
+      client.map.world,
+      event.x,
+      event.y,
+      event.z,
+      pelletVec.x,
+      pelletVec.y,
+      pelletVec.z,
+      WEAPON_MAX_RANGE,
+    );
+    if (distance >= WEAPON_MAX_RANGE) continue;
+    const hx = event.x + pelletVec.x * distance;
+    const hy = event.y + pelletVec.y * distance;
+    const hz = event.z + pelletVec.z * distance;
+    vfx.impact(hx, hy, hz, -pelletVec.x, -pelletVec.y, -pelletVec.z, surfaceColorAt(hx, hy, hz), now);
+  }
+}
+
 function nameOf(id: number): string {
   if (id === 0) return 'the storm';
   return id === client.playerId ? 'you' : `player ${id}`;
@@ -210,7 +271,10 @@ function handleEvent(event: GameEvent, now: number): void {
   audio.handleEvent(event, client.playerId);
   switch (event.type) {
     case EventType.Shot:
-      if (client.map !== null) tracers.add(event, client.map, now);
+      if (client.map !== null) {
+        tracers.add(event, client.map, now);
+        shotEffects(event, now);
+      }
       break;
     case EventType.Hit:
       hud.showHitMarker(now, event.killed);
@@ -370,14 +434,20 @@ function frame(): void {
     decor?.dispose(renderer.scene);
     worldView = new WorldView(renderer.scene, client.map);
     decor = new Decor(renderer.scene, client.map);
+    solidBoxes = client.map.boxes.filter((b) => b.solid);
     worldVersion = client.mapVersion;
   }
+
+  // Clamped: a backgrounded tab returns with a huge delta that would otherwise
+  // fling every live particle across the map in one step.
+  const dtSeconds = lastFrameTime === 0 ? 0 : Math.min((now - lastFrameTime) / 1000, 0.1);
+  lastFrameTime = now;
 
   for (const event of client.drainEvents()) handleEvent(event, now);
 
   if (client.ready) {
     updateCamera();
-    playerView.update(client.remotes);
+    playerView.update(client.remotes, dtSeconds);
 
     const state = client.predictor.state;
     const weapon = unpackWeapon(state.weapon);
@@ -403,6 +473,12 @@ function frame(): void {
     const banner = roundBanner();
     hud.setBanner(banner.title, banner.sub);
     hud.setRound(client.round, state.mode);
+    hud.setInStorm(
+      client.alive &&
+        client.round.phase === RoundPhase.Playing &&
+        client.round.stormRadius > 0 &&
+        outsideStorm(client.round, state.pos.x, state.pos.z),
+    );
     hud.setHint(
       input.locked
         ? null
@@ -418,12 +494,13 @@ function frame(): void {
     client.predictor.state.pos.z,
     dequantizeYaw(client.predictor.state.yawQ),
   );
-  roundView.update(client.round);
+  roundView.update(client.round, now / 1000);
   lootView.update(client.loot, now);
   renderer.focusShadows(renderer.camera.position);
   updateAudio();
   tracers.update(now);
   tracers.flush();
+  vfx.update(now, dtSeconds, renderer.camera);
   hud.update(now, dequantizeYaw(client.predictor.state.yawQ));
   hud.setStats(buildStats());
   const cpuMs = performance.now() - now;

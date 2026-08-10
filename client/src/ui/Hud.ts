@@ -49,6 +49,7 @@ export class Hud {
   private readonly weaponReload = mustFind('weapon').querySelector('.reloading') as HTMLElement;
   private readonly killFeedEl = mustFind('killfeed');
   private readonly damageEl = mustFind('damage');
+  private readonly stormTintEl = mustFind('stormtint');
   private readonly indicatorsEl = mustFind('indicators');
   private readonly bannerEl = mustFind('banner');
   private readonly hintEl = mustFind('hint');
@@ -96,6 +97,11 @@ export class Hud {
   setPerf(text: string): void {
     if (this.perfEl.style.display === 'none') return;
     this.perfEl.textContent = text;
+  }
+
+  /** Whether the local player is currently outside the safe circle. */
+  setInStorm(inStorm: boolean): void {
+    this.stormTintEl.classList.toggle('show', inStorm);
   }
 
   setPerfVisible(visible: boolean): void {

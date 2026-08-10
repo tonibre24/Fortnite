@@ -70,8 +70,10 @@ See [CLAUDE.md](CLAUDE.md) for the working agreements.
   rarities, chests, a five-slot inventory, medkits and shield potions.
 - Full round flow: lobby, battle bus, freefall and glide, a six-phase storm,
   victory screen and automatic restart.
-- Minimap, HUD and instanced rendering — 21 draw calls with a full 20-player
-  lobby.
+- Stylized low-poly presentation: committed late-afternoon lighting, procedural
+  sky gradient, fog matched to the horizon, a player-fitted shadow map, seeded
+  client-side scenery, pooled combat VFX, a shader storm wall and articulated
+  player figures. 35 draw calls and 129k triangles with a full 20-player lobby.
 - A player whose socket drops is removed from the world on the spot, so the
   round's alive count stays honest and a last-player-standing win still fires.
 - Procedural audio, synthesised at runtime with the Web Audio API - no files,

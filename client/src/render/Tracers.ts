@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import {
+  TRACER_FADE_DISTANCE,
   TRACER_LIFETIME_MS,
   WEAPON_MAX_RANGE,
   aimDirection,
@@ -28,15 +29,24 @@ const pellet = vec3();
 export class Tracers {
   private readonly geometry = new THREE.BufferGeometry();
   private readonly positions = new Float32Array(MAX_TRACERS * 6);
+  /** Per-vertex colour, so a round fades along its length and with range. */
+  private readonly colors = new Float32Array(MAX_TRACERS * 6);
   private readonly expiry = new Float64Array(MAX_TRACERS);
   private readonly line: THREE.LineSegments;
   private next = 0;
 
   constructor(scene: THREE.Scene) {
     this.geometry.setAttribute('position', new THREE.BufferAttribute(this.positions, 3));
+    this.geometry.setAttribute('color', new THREE.BufferAttribute(this.colors, 3));
     this.line = new THREE.LineSegments(
       this.geometry,
-      new THREE.LineBasicMaterial({ color: 0xffe9a8, transparent: true, opacity: 0.85 }),
+      new THREE.LineBasicMaterial({
+        vertexColors: true,
+        transparent: true,
+        opacity: 0.9,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      }),
     );
     this.line.frustumCulled = false;
     scene.add(this.line);
@@ -91,6 +101,19 @@ export class Tracers {
     this.positions[o + 4] = by;
     this.positions[o + 5] = bz;
     this.expiry[slot] = now + TRACER_LIFETIME_MS;
+
+    // Bright at the muzzle, dimming towards the impact, and dimmer overall the
+    // further the shot travelled - a long-range round should read as a hint of
+    // a line rather than the same hard streak as one fired across a room.
+    const length = Math.hypot(bx - ax, by - ay, bz - az);
+    const reach = 1 - Math.min(1, length / TRACER_FADE_DISTANCE) * 0.75;
+    const c = slot * 6;
+    this.colors[c] = 1 * reach;
+    this.colors[c + 1] = 0.91 * reach;
+    this.colors[c + 2] = 0.66 * reach;
+    this.colors[c + 3] = 0.42 * reach;
+    this.colors[c + 4] = 0.34 * reach;
+    this.colors[c + 5] = 0.2 * reach;
   }
 
   update(now: number): void {
@@ -109,5 +132,6 @@ export class Tracers {
   /** Uploads whatever was added this frame. */
   flush(): void {
     this.geometry.getAttribute('position').needsUpdate = true;
+    this.geometry.getAttribute('color').needsUpdate = true;
   }
 }
