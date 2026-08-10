@@ -85,6 +85,15 @@ export class WorldView {
     const matrix = new THREE.Matrix4();
     const base = new THREE.Color();
     const tint = new THREE.Color();
+    // A wall built from one small tileable texture repeated across a big
+    // footprint is what reads as an obviously repeating pattern at range.
+    // Per-instance jitter alone does not hide that - neighbouring boxes still
+    // land on independent random tints, which looks like static rather than
+    // the weathering it is meant to suggest. Keying a second, much
+    // lower-frequency noise off each box's own world position instead makes
+    // neighbouring walls and roofs fall into the same warm or cool patch, the
+    // same trick the ground tiles below already use over their grid.
+    const macroNoise = valueNoise(rng);
 
     for (const [color, boxes] of byColor) {
       const recipe = RECIPE_BY_COLOR.get(color);
@@ -105,10 +114,12 @@ export class WorldView {
         );
         matrix.setPosition((b.minX + b.maxX) / 2, (b.minY + b.maxY) / 2, (b.minZ + b.maxZ) / 2);
         mesh.setMatrixAt(i, matrix);
+        const macro =
+          macroNoise(b.minX * 0.018, b.minZ * 0.018) * 0.7 + macroNoise(b.minX * 0.005, b.minZ * 0.005) * 0.3;
         tint.copy(base).offsetHSL(
-          rng.range(-PROP_TINT_JITTER, PROP_TINT_JITTER) * 0.1,
-          rng.range(-PROP_TINT_JITTER, PROP_TINT_JITTER) * 0.3,
-          rng.range(-PROP_TINT_JITTER, PROP_TINT_JITTER) * 0.55,
+          rng.range(-PROP_TINT_JITTER, PROP_TINT_JITTER) * 0.1 + (macro - 0.5) * 0.05,
+          rng.range(-PROP_TINT_JITTER, PROP_TINT_JITTER) * 0.3 + (macro - 0.5) * 0.2,
+          rng.range(-PROP_TINT_JITTER, PROP_TINT_JITTER) * 0.55 + (macro - 0.5) * 0.4,
         );
         mesh.setColorAt(i, tint);
       }
@@ -174,11 +185,22 @@ export class WorldView {
         quaternion.setFromAxisAngle(axisY, (rng.int(0, 3) * Math.PI) / 2);
         matrix.compose(position, quaternion, scale);
         mesh.setMatrixAt(index, matrix);
-        const n = noise(ix * 0.16, iz * 0.16) * 0.65 + noise(ix * 0.42, iz * 0.42) * 0.35;
+        // A third, much coarser octave than the other two - low enough
+        // frequency to sweep across dozens of tiles in one patch - is the
+        // actual "second, larger-scale noise layer" a seed-derived, evenly
+        // repeated ground texture needs: the fine octaves alone still let the
+        // same tile-sized pattern read as tiled once a player is far enough
+        // back to see many tiles at once, because neighbouring tiles' tints
+        // stay close together. This one breaks that up at a scale no single
+        // glance covers.
+        const n =
+          noise(ix * 0.16, iz * 0.16) * 0.45 +
+          noise(ix * 0.42, iz * 0.42) * 0.2 +
+          noise(ix * 0.035, iz * 0.035) * 0.35;
         tint.copy(base).offsetHSL(
-          (n - 0.5) * PROP_TINT_JITTER * 0.22,
-          (n - 0.5) * PROP_TINT_JITTER * 0.7,
-          (n - 0.5) * PROP_TINT_JITTER * 1.1,
+          (n - 0.5) * PROP_TINT_JITTER * 0.3,
+          (n - 0.5) * PROP_TINT_JITTER * 0.9,
+          (n - 0.5) * PROP_TINT_JITTER * 1.5,
         );
         mesh.setColorAt(index, tint);
         index += 1;
