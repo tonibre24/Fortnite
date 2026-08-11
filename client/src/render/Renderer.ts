@@ -29,6 +29,7 @@ import {
   SSAO_MAX_DISTANCE,
   SSAO_MIN_DISTANCE,
   SSAO_RADIUS,
+  SSAO_RESOLUTION_SCALE,
   SUN_AZIMUTH,
   SUN_COLOR,
   SUN_ELEVATION,
@@ -64,6 +65,7 @@ export class Renderer {
   private composer: EffectComposer;
   private fxaaPass: ShaderPass | null = null;
   private vignettePass: ShaderPass | null = null;
+  private ssaoPass: SSAOPass | null = null;
   private settings: QualitySettings;
   private tier: QualityTierId;
   /** Bumped every time materials need csm.setupMaterial() called again. */
@@ -185,6 +187,7 @@ export class Renderer {
 
     this.fxaaPass = null;
     this.vignettePass = null;
+    this.ssaoPass = null;
 
     if (this.settings.postProcessing) {
       if (this.settings.ssao) {
@@ -194,6 +197,7 @@ export class Renderer {
         ssao.maxDistance = SSAO_MAX_DISTANCE;
         ssao.output = SSAOPass.OUTPUT.Default;
         composer.addPass(ssao);
+        this.ssaoPass = ssao;
       }
 
       if (this.settings.bloom) {
@@ -236,6 +240,11 @@ export class Renderer {
 
     this.csm.dispose();
     this.csm = this.buildCsm();
+    // EffectComposer.dispose() only frees its own ping-pong render targets -
+    // SSAOPass, UnrealBloomPass, ShaderPass and OutputPass each own further
+    // render targets/materials of their own (SSAO alone holds three) that it
+    // never reaches, so every tier switch was leaking them.
+    for (const pass of this.composer.passes) pass.dispose();
     this.composer.dispose();
     this.composer = this.buildComposer();
     this.resize();
@@ -278,6 +287,14 @@ export class Renderer {
     if (this.fxaaPass) {
       const ratio = this.renderer.getPixelRatio();
       this.fxaaPass.uniforms.resolution.value.set(1 / (width * scale * ratio), 1 / (height * scale * ratio));
+    }
+    if (this.ssaoPass) {
+      // composer.setSize() just forced every pass - this one included - back
+      // up to full resolution; pull SSAO's own render targets back down.
+      this.ssaoPass.setSize(
+        Math.round(width * scale * SSAO_RESOLUTION_SCALE),
+        Math.round(height * scale * SSAO_RESOLUTION_SCALE),
+      );
     }
     this.csm.updateFrustums();
   }

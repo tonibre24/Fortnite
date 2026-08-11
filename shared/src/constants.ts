@@ -350,6 +350,12 @@ export const MINIMAP_PLAYER_SIZE = 5;
 export const PERF_SAMPLE_FRAMES = 30;
 /** Cap on the retained frame-time log, so a long session cannot grow forever. */
 export const PERF_LOG_MAX = 20000;
+/**
+ * The always-on connection/position readout is text, not motion - a human
+ * cannot tell it apart from a 60Hz refresh at this rate, so there is no
+ * reason to rebuild its string and write the DOM every single frame.
+ */
+export const STATS_UPDATE_INTERVAL_MS = 150;
 
 // -------------------------------------------------------------------- visuals
 
@@ -432,6 +438,16 @@ export const SHADOW_SOFT_RADIUS = 3.5;
 export const SSAO_RADIUS = 0.6;
 export const SSAO_MIN_DISTANCE = 0.0006;
 export const SSAO_MAX_DISTANCE = 0.09;
+/**
+ * SSAOPass's normal/AO/blur passes default to a fixed 512x512 target, but
+ * EffectComposer.setSize() unconditionally resizes every pass - including
+ * this one - to the full render resolution, which was silently making SSAO
+ * re-render the entire scene's normals and run its occlusion + blur passes
+ * at 100% resolution every frame. AO is inherently low-frequency (it is
+ * blurred on top of that), so a quarter of the pixels loses essentially
+ * nothing visible while cutting that pass's fill-rate cost by ~4x.
+ */
+export const SSAO_RESOLUTION_SCALE = 0.5;
 /** Light bloom on the brightest points only. */
 export const BLOOM_STRENGTH = 0.22;
 export const BLOOM_RADIUS = 0.4;

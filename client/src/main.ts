@@ -12,6 +12,7 @@ import {
   PERF_LOG_MAX,
   PERF_SAMPLE_FRAMES,
   RoundPhase,
+  STATS_UPDATE_INTERVAL_MS,
   SHIELD_POTION_USE_TICKS,
   StateFlag,
   STORM_PHASES,
@@ -141,6 +142,8 @@ let materialsVersion = -1;
 let solidBoxes: readonly { color: number }[] = [];
 const hitQuery: number[] = [];
 let lastFrameTime = 0;
+/** Throttles the always-on debug readout - see its use in frame() below. */
+let lastStatsUpdate = 0;
 /** Who the camera follows once the local player is out of the round. */
 let spectating = 0;
 /** Ticks the local player has held fire on a consumable, for the use bar. */
@@ -648,7 +651,10 @@ function frame(): void {
   tracers.flush();
   vfx.update(now, dtSeconds, renderer.camera);
   hud.update(now, dequantizeYaw(client.predictor.state.yawQ));
-  hud.setStats(buildStats());
+  if (now - lastStatsUpdate >= STATS_UPDATE_INTERVAL_MS) {
+    hud.setStats(buildStats());
+    lastStatsUpdate = now;
+  }
   const cpuMs = performance.now() - now;
   const drawStart = performance.now();
   renderer.render(now, viewmodel.camera);
