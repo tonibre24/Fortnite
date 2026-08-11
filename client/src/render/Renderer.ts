@@ -259,6 +259,16 @@ export class Renderer {
   }
 
   /**
+   * The active tier's anisotropy, clamped to what this GPU actually supports.
+   * Asking for more than the cap is silently ignored by WebGL rather than
+   * erroring, so clamping here keeps the F3 overlay honest about what is
+   * really being sampled.
+   */
+  get anisotropy(): number {
+    return Math.min(this.settings.anisotropy, this.renderer.capabilities.getMaxAnisotropy());
+  }
+
+  /**
    * Every opaque, lit material must be registered once to receive the
    * cascaded shadows correctly - without this a material still picks up light
    * from all of CSM's underlying DirectionalLights, just summed instead of

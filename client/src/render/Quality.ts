@@ -44,6 +44,16 @@ export interface QualitySettings {
   drawDistanceScale: number;
   /** Canvas-texture resolution for procedural materials. */
   textureSize: number;
+  /**
+   * Anisotropic filtering samples. The ground is almost always seen at a
+   * grazing angle in a first-person game, which is precisely the case
+   * isotropic mipmapping handles worst - it picks a mip for the shortest
+   * texture axis and blurs the long one to mush. This is the cheapest
+   * quality setting available: it costs texture-sampling bandwidth only,
+   * no extra geometry, draw calls or passes. Clamped at runtime against
+   * `renderer.capabilities.getMaxAnisotropy()`.
+   */
+  anisotropy: number;
 }
 
 const TIERS: Record<QualityTierId, QualitySettings> = {
@@ -60,6 +70,7 @@ const TIERS: Record<QualityTierId, QualitySettings> = {
     vegetationDensity: 0.18,
     drawDistanceScale: 0.55,
     textureSize: 128,
+    anisotropy: 1,
   },
   [QualityTier.Medium]: {
     shadows: true,
@@ -80,6 +91,7 @@ const TIERS: Record<QualityTierId, QualitySettings> = {
     vegetationDensity: 0.45,
     drawDistanceScale: 0.75,
     textureSize: 256,
+    anisotropy: 4,
   },
   [QualityTier.High]: {
     shadows: true,
@@ -94,6 +106,7 @@ const TIERS: Record<QualityTierId, QualitySettings> = {
     vegetationDensity: 0.75,
     drawDistanceScale: 0.9,
     textureSize: 512,
+    anisotropy: 8,
   },
   [QualityTier.Ultra]: {
     shadows: true,
@@ -108,6 +121,7 @@ const TIERS: Record<QualityTierId, QualitySettings> = {
     vegetationDensity: 1,
     drawDistanceScale: 1,
     textureSize: 1024,
+    anisotropy: 16,
   },
 };
 

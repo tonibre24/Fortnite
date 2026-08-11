@@ -131,11 +131,16 @@ function makeCanvas(size: number): { canvas: HTMLCanvasElement; ctx: CanvasRende
   return { canvas, ctx };
 }
 
-function toTexture(canvas: HTMLCanvasElement, srgb: boolean): THREE.CanvasTexture {
+function toTexture(canvas: HTMLCanvasElement, srgb: boolean, anisotropy: number): THREE.CanvasTexture {
   const texture = new THREE.CanvasTexture(canvas);
   texture.wrapS = THREE.RepeatWrapping;
   texture.wrapT = THREE.RepeatWrapping;
   texture.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+  // Ground and walls are nearly always seen edge-on from eye height, which is
+  // the exact case isotropic mipmapping degrades worst: it selects a mip for
+  // the compressed axis and smears the other one. Anything above 1 here buys
+  // back most of that lost detail for texture-sampling cost alone.
+  texture.anisotropy = anisotropy;
   texture.needsUpdate = true;
   return texture;
 }
@@ -158,7 +163,12 @@ export interface MaterialRecipe {
  * the dark, damp-looking patches in the albedo are the same low spots that
  * end up smoother in the roughness map and dented in the normal map.
  */
-export function buildTextureSet(recipe: MaterialRecipe, size: number, seed: number): TextureSet {
+export function buildTextureSet(
+  recipe: MaterialRecipe,
+  size: number,
+  seed: number,
+  anisotropy: number,
+): TextureSet {
   const random = mulberry32(seed);
   // Broad shape plus a finer octave baked straight into the same field, so
   // the detail is present in the source data every map is derived from.
@@ -205,9 +215,9 @@ export function buildTextureSet(recipe: MaterialRecipe, size: number, seed: numb
 
   const normalCanvas = heightFieldToNormalMap(field, size, recipe.normalStrength);
 
-  const map = toTexture(albedoCanvas, true);
-  const normalMap = toTexture(normalCanvas, false);
-  const roughnessMap = toTexture(roughCanvas, false);
+  const map = toTexture(albedoCanvas, true, anisotropy);
+  const normalMap = toTexture(normalCanvas, false, anisotropy);
+  const roughnessMap = toTexture(roughCanvas, false, anisotropy);
 
   return {
     map,

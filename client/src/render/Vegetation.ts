@@ -49,9 +49,14 @@ export class Vegetation {
     map: GameMap,
     setupCascadeMaterial: (material: THREE.Material) => void,
     density = 1,
+    anisotropy = 1,
   ) {
     const rng = new Rng((map.seed ^ FARM_SEED_SALT) >>> 0);
     this.leafMap = buildFoliageTexture(rng);
+    // Alpha-cutout foliage is the other surface that shimmers badly under
+    // isotropic filtering - hundreds of thin billboard edges crawling as the
+    // camera moves. Same near-zero cost as on the ground.
+    this.leafMap.anisotropy = anisotropy;
 
     this.material = new THREE.MeshStandardMaterial({
       map: this.leafMap,

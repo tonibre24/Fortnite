@@ -46,6 +46,7 @@ export class WorldView {
     map: GameMap,
     private readonly setupCascadeMaterial: (material: THREE.Material) => void,
     textureSize: number,
+    anisotropy: number,
   ) {
     // Same salt as the decoration stream, drawn after it so the two never
     // interleave; both are reproducible from the map seed alone.
@@ -60,7 +61,7 @@ export class WorldView {
     const textureFor = (recipe: MaterialRecipe, salt: number): TextureSet => {
       let set = textureCache.get(recipe);
       if (set === undefined) {
-        set = buildTextureSet(recipe, textureSize, (map.seed ^ salt) >>> 0);
+        set = buildTextureSet(recipe, textureSize, (map.seed ^ salt) >>> 0, anisotropy);
         textureCache.set(recipe, set);
         this.textureSets.push(set);
       }

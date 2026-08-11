@@ -253,7 +253,7 @@ function samplePerf(now: number, cpuMs: number, drawMs: number): void {
     `${(cpuTotal / frameSamples).toFixed(2)} ms game  ${(drawTotal / frameSamples).toFixed(2)} ms draw\n` +
     `${renderer.drawCalls} draws  ${(renderer.triangles / 1000).toFixed(0)}k tris\n` +
     `${renderer.textureCount} tex  ${renderer.geometryCount} geo  ${renderer.programCount} prog  ${(textureMemoryBytes() / 1048576).toFixed(1)}MB texmem\n` +
-    `tier ${QUALITY_TIER_NAMES[renderer.qualityTier]}  shadows ${quality.shadows ? `${quality.cascades}csm` : 'off'}  props ${totalPropCount()}`;
+    `tier ${QUALITY_TIER_NAMES[renderer.qualityTier]}  shadows ${quality.shadows ? `${quality.cascades}csm` : 'off'}  aniso ${renderer.anisotropy}x  props ${totalPropCount()}`;
   frameSamples = 0;
   frameTotal = 0;
   cpuTotal = 0;
@@ -553,7 +553,13 @@ function frame(): void {
     vegetation?.dispose(renderer.scene);
     farmDressing?.dispose(renderer.scene);
     playerView.dispose();
-    worldView = new WorldView(renderer.scene, client.map, renderer.setupCascadeMaterial, renderer.quality.textureSize);
+    worldView = new WorldView(
+      renderer.scene,
+      client.map,
+      renderer.setupCascadeMaterial,
+      renderer.quality.textureSize,
+      renderer.anisotropy,
+    );
     decor = new Decor(
       renderer.scene,
       client.map,
@@ -565,6 +571,7 @@ function frame(): void {
       client.map,
       renderer.setupCascadeMaterial,
       renderer.quality.vegetationDensity,
+      renderer.anisotropy,
     );
     farmDressing = new FarmDressing(
       renderer.scene,
