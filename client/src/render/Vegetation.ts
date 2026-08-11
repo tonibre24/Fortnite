@@ -22,6 +22,7 @@ import {
   type Poi,
 } from '@br/shared';
 import { BlobShadowBatch } from './BlobShadowBatch.js';
+import { buildCrossBillboardGeometry, buildFoliageTexture } from './Foliage.js';
 import { fieldBoundaryPoints } from './fieldBoundaries.js';
 
 /**
@@ -211,70 +212,6 @@ function insideAnyBuilding(buildings: readonly Building[], x: number, z: number)
     if (x > b.minX - 1 && x < b.maxX + 1 && z > b.minZ - 1 && z < b.maxZ + 1) return true;
   }
   return false;
-}
-
-/**
- * Two unit cards crossed at right angles, base at y=0 and tip at y=1 in local
- * space - instance scale supplies the actual width/height, so wind sway
- * (keyed off local y) and the per-instance size stay independent of each
- * other. DoubleSide plus per-fragment face-direction flipping (built into the
- * standard shader) lights both faces correctly from one set of normals.
- */
-function buildCrossBillboardGeometry(): THREE.BufferGeometry {
-  const geometry = new THREE.BufferGeometry();
-  const position = new Float32Array([
-    // Plane A, in the XY plane at z=0, normal +Z.
-    -0.5, 0, 0, 0.5, 0, 0, 0.5, 1, 0, -0.5, 1, 0,
-    // Plane B, in the ZY plane at x=0, normal +X.
-    0, 0, -0.5, 0, 0, 0.5, 0, 1, 0.5, 0, 1, -0.5,
-  ]);
-  const normal = new Float32Array([
-    0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1,
-    1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0,
-  ]);
-  const uv = new Float32Array([
-    0, 0, 1, 0, 1, 1, 0, 1,
-    0, 0, 1, 0, 1, 1, 0, 1,
-  ]);
-  const index = [0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7];
-
-  geometry.setAttribute('position', new THREE.BufferAttribute(position, 3));
-  geometry.setAttribute('normal', new THREE.BufferAttribute(normal, 3));
-  geometry.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
-  geometry.setIndex(index);
-  return geometry;
-}
-
-/**
- * Renders a soft, irregular foliage clump to an alpha-cutout texture on
- * Canvas2D - several overlapping radial-gradient blobs rather than one
- * circle, so the silhouette reads as a bush and not a lollipop.
- */
-function buildFoliageTexture(rng: Rng, size = 96): THREE.CanvasTexture {
-  const canvas = document.createElement('canvas');
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext('2d');
-  if (ctx === null) throw new Error('2d canvas context unavailable');
-
-  const blobs = 7 + Math.floor(rng.range(0, 3));
-  for (let i = 0; i < blobs; i++) {
-    const bx = size * 0.5 + rng.range(-0.3, 0.3) * size;
-    const by = size * 0.55 + rng.range(-0.32, 0.32) * size;
-    const r = size * rng.range(0.24, 0.4);
-    const gradient = ctx.createRadialGradient(bx, by, 0, bx, by, r);
-    gradient.addColorStop(0, 'rgba(255,255,255,1)');
-    gradient.addColorStop(0.7, 'rgba(255,255,255,0.9)');
-    gradient.addColorStop(1, 'rgba(255,255,255,0)');
-    ctx.fillStyle = gradient;
-    ctx.beginPath();
-    ctx.arc(bx, by, r, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.needsUpdate = true;
-  return texture;
 }
 
 /**

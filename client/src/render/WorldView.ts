@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import {
+  COLOR_TREE_CANOPY,
   DECOR_SEED_SALT,
   GROUND_TILES,
   MAP_HALF,
@@ -8,6 +9,7 @@ import {
   type GameMap,
   type MapBox,
 } from '@br/shared';
+import { buildCrossBillboardGeometry, buildFoliageTexture } from './Foliage.js';
 import { GROUND_RECIPE, RECIPE_BY_COLOR } from './MaterialRecipes.js';
 import { buildTextureSet, type MaterialRecipe, type TextureSet } from './ProceduralTexture.js';
 
@@ -40,6 +42,9 @@ export class WorldView {
   private readonly geometry = new THREE.BoxGeometry(1, 1, 1);
   private readonly materials: THREE.Material[] = [];
   private readonly textureSets: TextureSet[] = [];
+  /** Owned separately from textureSets: not a full PBR set, just a leaf mask. */
+  private canopyGeometry: THREE.BufferGeometry | null = null;
+  private canopyTexture: THREE.CanvasTexture | null = null;
 
   constructor(
     scene: THREE.Scene,
@@ -69,8 +74,20 @@ export class WorldView {
     };
 
     const byColor = new Map<number, MapBox[]>();
+    const canopies: MapBox[] = [];
     let ground: MapBox | null = null;
     for (const box of map.boxes) {
+      // Tree canopies are decoration-only boxes (map generation marks them
+      // non-solid), so how they are drawn is entirely a client concern. Drawn
+      // as boxes they are the single most artificial thing on screen: 320
+      // green rectangles on sticks, with a four-corner silhouette no amount
+      // of shading can rescue. They are re-drawn as crossed billboards below
+      // instead. The box stays in map.boxes untouched - the seeded hash and
+      // the collision world are not this file's to change.
+      if (box.color === COLOR_TREE_CANOPY) {
+        canopies.push(box);
+        continue;
+      }
       // The ground slab covers essentially the whole map; nothing else comes
       // close, so its footprint identifies it without map generation having to
       // label it.
@@ -105,6 +122,7 @@ export class WorldView {
       this.setupCascadeMaterial(material);
       this.materials.push(material);
       const mesh = new THREE.InstancedMesh(this.geometry, material, boxes.length);
+      const textured = recipe !== undefined;
       base.setHex(color);
       for (let i = 0; i < boxes.length; i++) {
         const b = boxes[i]!;
@@ -117,11 +135,24 @@ export class WorldView {
         mesh.setMatrixAt(i, matrix);
         const macro =
           macroNoise(b.minX * 0.018, b.minZ * 0.018) * 0.7 + macroNoise(b.minX * 0.005, b.minZ * 0.005) * 0.3;
-        tint.copy(base).offsetHSL(
-          rng.range(-PROP_TINT_JITTER, PROP_TINT_JITTER) * 0.1 + (macro - 0.5) * 0.05,
-          rng.range(-PROP_TINT_JITTER, PROP_TINT_JITTER) * 0.3 + (macro - 0.5) * 0.2,
-          rng.range(-PROP_TINT_JITTER, PROP_TINT_JITTER) * 0.55 + (macro - 0.5) * 0.4,
-        );
+        if (textured) {
+          // The albedo map already carries this surface's colour. Instance
+          // colour multiplies that map, so feeding the box colour in again
+          // renders the surface at colour-squared - which is why textured
+          // ground sat far darker than the untextured hills sitting on it,
+          // despite both being nominally the same green. Modulate around
+          // white instead, so the variation still reads but the map's own
+          // colour survives.
+          setNeutralTint(tint, macro, rng);
+        } else {
+          setJitteredTint(
+            tint,
+            base,
+            rng.range(-PROP_TINT_JITTER, PROP_TINT_JITTER) * 0.1 + (macro - 0.5) * 0.05,
+            rng.range(-PROP_TINT_JITTER, PROP_TINT_JITTER) * 0.3 + (macro - 0.5) * 0.2,
+            rng.range(-PROP_TINT_JITTER, PROP_TINT_JITTER) * 0.55 + (macro - 0.5) * 0.4,
+          );
+        }
         mesh.setColorAt(i, tint);
       }
       mesh.instanceMatrix.needsUpdate = true;
@@ -132,8 +163,96 @@ export class WorldView {
       this.group.add(mesh);
     }
 
+    if (canopies.length > 0) this.treeCanopies(canopies, rng, anisotropy);
     if (ground !== null) this.tiledGround(ground, rng, textureFor(GROUND_RECIPE, ground.color));
     scene.add(this.group);
+  }
+
+  /**
+   * Tree canopies as crossed alpha-cutout billboards instead of the boxes
+   * map generation records them as.
+   *
+   * A canopy box is non-solid decoration, so nothing about collision, the
+   * seeded map hash or the server's view of the world changes here - only
+   * what the client puts on screen in the same place. The billboard is also
+   * *cheaper* than the box it replaces (four triangles against twelve), so
+   * the far better silhouette costs nothing: 320 trees go from 3,840
+   * triangles to 1,280, in the same single draw call.
+   */
+  private treeCanopies(canopies: readonly MapBox[], rng: Rng, anisotropy: number): void {
+    const geometry = buildCrossBillboardGeometry();
+    // A busier lobe count than a shrub gets: at tree scale the outline is
+    // read against open sky, where a smooth blob still looks stamped.
+    const leafMap = buildFoliageTexture(rng, 128, 2.2);
+    leafMap.anisotropy = anisotropy;
+    const material = new THREE.MeshStandardMaterial({
+      map: leafMap,
+      // White base on purpose: the per-instance colour below carries the
+      // green. Putting COLOR_TREE_CANOPY here too would multiply the two
+      // together and render the crowns near-black - the same trap the
+      // textured boxes above fell into.
+      color: 0xffffff,
+      alphaTest: 0.42,
+      side: THREE.DoubleSide,
+      roughness: 0.86,
+      metalness: 0,
+      // Deliberately NOT vertexColors: true. InstancedMesh.instanceColor
+      // already defines USE_COLOR on its own, and setting the flag as well
+      // makes the vertex shader run `vColor *= color` against a geometry
+      // attribute this billboard does not have - an unbound attribute reads
+      // as zero, which multiplies every crown to black.
+    });
+    this.setupCascadeMaterial(material);
+    this.materials.push(material);
+    this.canopyGeometry = geometry;
+    this.canopyTexture = leafMap;
+
+    const mesh = new THREE.InstancedMesh(geometry, material, canopies.length);
+    const matrix = new THREE.Matrix4();
+    const position = new THREE.Vector3();
+    const quaternion = new THREE.Quaternion();
+    const scale = new THREE.Vector3();
+    const axisY = new THREE.Vector3(0, 1, 0);
+    const tint = new THREE.Color();
+    const canopyBase = new THREE.Color(COLOR_TREE_CANOPY);
+
+    for (let i = 0; i < canopies.length; i++) {
+      const b = canopies[i]!;
+      const width = b.maxX - b.minX;
+      const height = b.maxY - b.minY;
+      // Map generation makes the canopy box taller than it is wide, which is
+      // the opposite of a real broadleaf crown - those are as wide as they
+      // are tall or wider. Spread it well out and drop it slightly so the
+      // foliage swallows the top of the trunk rather than balancing on it.
+      scale.set(width * 2.6, height * 1.5, width * 2.6);
+      position.set((b.minX + b.maxX) / 2, b.minY - height * 0.42, (b.minZ + b.maxZ) / 2);
+      // A free yaw per tree, so 320 copies of one texture do not line up.
+      quaternion.setFromAxisAngle(axisY, rng.range(0, Math.PI * 2));
+      matrix.compose(position, quaternion, scale);
+      mesh.setMatrixAt(i, matrix);
+      // Real canopies vary far more than one flat green: age, species and
+      // how much light each crown gets all show up as tone.
+      // Derived from the map's own canopy colour rather than a hand-picked
+      // HSL triple: instance colours are consumed as-is by the shader, so
+      // building one from raw setHSL lands in a different colour space than
+      // every other prop here (which comes from a COLOR_* hex through
+      // THREE.Color) and renders far too bright. Same path as the trunks and
+      // shrubs, so foliage matches the palette instead of floating above it.
+      setJitteredTint(
+        tint,
+        canopyBase,
+        rng.range(-0.03, 0.04),
+        rng.range(-0.12, 0.12),
+        rng.range(-0.22, 0.26),
+      );
+      mesh.setColorAt(i, tint);
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor !== null) mesh.instanceColor.needsUpdate = true;
+    mesh.frustumCulled = false;
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    this.group.add(mesh);
   }
 
   /**
@@ -166,7 +285,6 @@ export class WorldView {
     const quaternion = new THREE.Quaternion();
     const scale = new THREE.Vector3();
     const axisY = new THREE.Vector3(0, 1, 0);
-    const base = new THREE.Color(ground.color);
     const tint = new THREE.Color();
 
     let index = 0;
@@ -198,11 +316,11 @@ export class WorldView {
           noise(ix * 0.16, iz * 0.16) * 0.45 +
           noise(ix * 0.42, iz * 0.42) * 0.2 +
           noise(ix * 0.035, iz * 0.035) * 0.35;
-        tint.copy(base).offsetHSL(
-          (n - 0.5) * PROP_TINT_JITTER * 0.3,
-          (n - 0.5) * PROP_TINT_JITTER * 0.9,
-          (n - 0.5) * PROP_TINT_JITTER * 1.5,
-        );
+        // Same reasoning as the textured boxes above: the grass albedo map
+        // supplies the colour, so this only modulates it. The tile's own
+        // `ground.color` is deliberately not mixed in here - that is exactly
+        // the second multiply that was darkening it.
+        setNeutralTint(tint, n, rng);
         mesh.setColorAt(index, tint);
         index += 1;
       }
@@ -231,8 +349,56 @@ export class WorldView {
     }
     for (const material of this.materials) material.dispose();
     for (const set of this.textureSets) set.dispose();
+    this.canopyGeometry?.dispose();
+    this.canopyTexture?.dispose();
     this.geometry.dispose();
   }
+}
+
+const scratchHSL = { h: 0, s: 0, l: 0 };
+
+/**
+ * Per-instance colour for an *untextured* surface, jittered around its own
+ * base colour.
+ *
+ * The lightness offset is scaled to the base rather than added flat. A flat
+ * offset is fine on a mid-tone wall but destroys a dark one: tree trunks sit
+ * at lightness 0.26, the offset reaches 0.26, and any trunk drawing the low
+ * end clamps to zero and renders pure black - visible as black poles among
+ * the brown ones. Scaling keeps the variation proportional, so a dark colour
+ * varies within its own range instead of falling off the bottom.
+ */
+function setJitteredTint(
+  out: THREE.Color,
+  base: THREE.Color,
+  dh: number,
+  ds: number,
+  dl: number,
+): void {
+  base.getHSL(scratchHSL);
+  const l = scratchHSL.l;
+  const lit = l + dl * (dl < 0 ? l * 1.6 : 1 - l);
+  out.setHSL(
+    scratchHSL.h + dh,
+    Math.min(1, Math.max(0, scratchHSL.s + ds)),
+    Math.min(1, Math.max(0.03, lit)),
+  );
+}
+
+/**
+ * Per-instance colour for a *textured* surface.
+ *
+ * Instance colour multiplies the albedo map, so for a textured surface it is
+ * a modulation term, not a colour: it has to average 1.0 or the material
+ * renders darker than the map it was authored as. `noise` (0..1) drives a
+ * broad brightness sweep plus a slight warm/cool shift, with a little
+ * per-instance grain on top - enough variation to break up repetition without
+ * shifting the surface off its intended colour.
+ */
+function setNeutralTint(out: THREE.Color, noise: number, rng: Rng): void {
+  const shade = 1 + (noise - 0.5) * 0.30 + rng.range(-0.05, 0.05);
+  const warm = (noise - 0.5) * 0.06;
+  out.setRGB(shade * (1 + warm), shade, shade * (1 - warm));
 }
 
 /** Builds a MeshStandardMaterial from a generated texture set at a given UV repeat. */
